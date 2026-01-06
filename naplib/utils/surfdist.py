@@ -201,6 +201,10 @@ def surfdist_viz(
 
     if not isinstance(stat_map, list) and not isinstance(stat_map, tuple):
         stat_map = [stat_map]
+    if not isinstance(vmin, list) and not isinstance(vmin, tuple):
+        vmin = [vmin]
+    if not isinstance(vmax, list) and not isinstance(vmax, tuple):
+        vmax = [vmax]
 
     if ax is None:
         premade_ax = False
