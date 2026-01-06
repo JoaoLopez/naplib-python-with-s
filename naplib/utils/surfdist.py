@@ -265,27 +265,28 @@ def surfdist_viz(
                 stat_map_faces = [smf - vmi
                  for smf,vmi in zip(stat_map_faces, vmin)]
                 stat_map_faces = [smf / (vma - vmi)
-                 for smf, vma, vmi in zip(stat_map_faces, vmin, vmax)]
+                 for smf, vma, vmi in zip(stat_map_faces, vmax, vmin)]
                 if bg_on_stat:
-                    face_colors[kept_indices] = np.array([cmap(*smf) 
+                    face_colors[kept_indices] = np.stack([cmap(*smf) 
                         for smf in zip(*stat_map_faces) 
-                        if i in kept_indices]) * face_colors[kept_indices]
+                        if i in kept_indices], axis=0) * face_colors[kept_indices]
                     face_colors[kept_indices] = cmap(stat_map_faces[kept_indices]) 
                 else:
-                    face_colors[kept_indices] = np.array([cmap(*smf) 
+                    face_colors[kept_indices] = np.stack([cmap(*smf) 
                         for smf in zip(*stat_map_faces) 
-                        if i in kept_indices])
+                        if i in kept_indices], axis=0)
             else:
                 stat_map_faces = [smf - vmi
                  for smf,vmi in zip(stat_map_faces, vmin)]
                 stat_map_faces = [smf / (vma - vmi)
-                 for smf, vma, vmi in zip(stat_map_faces, vmin, vmax)]
+                 for smf, vma, vmi in zip(stat_map_faces, vmax, vmin)]
+
                 if bg_on_stat:
-                    face_colors = np.array([cmap(*smf)
-                     for smf in zip(*stat_map_faces)]) * face_colors
+                    face_colors = np.stack([cmap(*smf)
+                     for smf in zip(*stat_map_faces)], axis=0) * face_colors
                 else:
-                    face_colors = np.array([cmap(*smf)
-                     for smf in zip(*stat_map_faces)])
+                    face_colors = np.stack([cmap(*smf)
+                     for smf in zip(*stat_map_faces)], axis=0)
 
         if light_source:
             if hasattr(light_source, '__len__'):
