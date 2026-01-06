@@ -142,13 +142,17 @@ def surfdist_viz(
             of the three nodes building one node of the surface mesh
     stat_map : numpy array of shape (n_nodes,) containing the values to be
                visualized for each node.
+               Alternately, a list or tuple of numpy arrays of shape (n_nodes,)
+               containing separate stat_maps for multi-dimensional colormaps
     elev, azim : integers, elevation and azimuth parameters specifying the view
                  on the 3D plot. For Freesurfer surfaces elev=0, azim=0 will
                  give a lateral view for the right and a medial view for the
                  left hemisphere, elev=0, azim=180 will give a medial view for
                  the right and lateral view for the left hemisphere.
     cmap : Matplotlib colormap, the color range will me forced to be symmetric.
-           Colormaps can be specified as string or colormap object.
+           Colormaps can be specified as string, colormap object, or custom
+           function that maps the number of stat_maps provided to a single color
+           for utilizing multi-dimenstional colormaps.
     threshold : float, threshold to be applied to the map, will be applied in
                 positive and negative direction, i.e. values < -abs(threshold)
                 and > abs(threshold) will be shown.
@@ -194,6 +198,9 @@ def surfdist_viz(
             cmap = plt.cm.get_cmap(cmap)
         except AttributeError:
             cmap = plt.get_cmap(cmap)
+
+    if not isinstance(stat_map, list) and not isinstance(stat_map, tuple):
+        stat_map = [stat_map]
 
     if ax is None:
         premade_ax = False
@@ -243,32 +250,42 @@ def surfdist_viz(
 
         if stat_map is not None:
             stat_map_data = stat_map
-            stat_map_faces = np.mean(stat_map_data[faces], axis=1)
+            stat_map_faces = [np.mean(smd[faces], axis=1) for smd in stat_map_data]
 
             # Ensure symmetric colour range, based on Nilearn helper function:
             # https://github.com/nilearn/nilearn/blob/master/nilearn/plotting/img_plotting.py#L52
             if vmax is None:
-                vmax = max(-np.nanmin(stat_map_faces), np.nanmax(stat_map_faces))
+                vmax = [max(-np.nanmin(smf), np.nanmax(smf)) for smf in stat_map_faces]
             if vmin is None:
-                vmin = -vmax
+                vmin = [-vm for vm in vmax]
 
             if threshold is not None:
-                kept_indices = np.where(abs(stat_map_faces) >= threshold)[0]
-                stat_map_faces = stat_map_faces - vmin
-                stat_map_faces = stat_map_faces / (vmax - vmin)
+                kept_indices = [np.where(abs(smf) >= th)[0]
+                 for smf,th in zip(stat_map_faces, threshold)]
+                stat_map_faces = [smf - vmi
+                 for smf,vmi in zip(stat_map_faces, vmin)]
+                stat_map_faces = [smf / (vma - vmi)
+                 for smf, vma, vmi in zip(stat_map_faces, vmin, vmax)]
                 if bg_on_stat:
-                    face_colors[kept_indices] = (
-                        cmap(stat_map_faces[kept_indices]) * face_colors[kept_indices]
-                    )
+                    face_colors[kept_indices] = np.array([cmap(*smf) 
+                        for smf in zip(*stat_map_faces) 
+                        if i in kept_indices]) * face_colors[kept_indices]
+                    face_colors[kept_indices] = cmap(stat_map_faces[kept_indices]) 
                 else:
-                    face_colors[kept_indices] = cmap(stat_map_faces[kept_indices])
+                    face_colors[kept_indices] = np.array([cmap(*smf) 
+                        for smf in zip(*stat_map_faces) 
+                        if i in kept_indices])
             else:
-                stat_map_faces = stat_map_faces - vmin
-                stat_map_faces = stat_map_faces / (vmax - vmin)
+                stat_map_faces = [smf - vmi
+                 for smf,vmi in zip(stat_map_faces, vmin)]
+                stat_map_faces = [smf / (vma - vmi)
+                 for smf, vma, vmi in zip(stat_map_faces, vmin, vmax)]
                 if bg_on_stat:
-                    face_colors = cmap(stat_map_faces) * face_colors
+                    face_colors = np.array([cmap(*smf)
+                     for smf in zip(*stat_map_faces)]) * face_colors
                 else:
-                    face_colors = cmap(stat_map_faces)
+                    face_colors = np.array([cmap(*smf)
+                     for smf in zip(*stat_map_faces)])
 
         if light_source:
             if hasattr(light_source, '__len__'):
