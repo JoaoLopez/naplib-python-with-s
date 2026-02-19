@@ -2,6 +2,21 @@ import numpy as np
 import pandas as pd
 from scipy import signal as sig
 from sklearn.linear_model import Ridge
+from mne.decoding.receptive_field import _delay_time_series as time_lag
+
+def pairwise_correlation(A, B):
+    # If inputs are 1D, ensure they are treated as vectors
+    # This version works for both 1D and 2D
+    am = A - np.mean(A, axis=0)
+    bm = B - np.mean(B, axis=0)
+    
+    # Using np.dot for 1D or am.T @ bm for 2D
+    # For 1D vectors, am @ bm is a scalar
+    coscale = np.dot(am, bm)
+    a_ss = np.dot(am, am)
+    b_ss = np.dot(bm, bm)
+    
+    return coscale / np.sqrt(a_ss * b_ss)
 
 def prepare_feature_matrix(trial_data, feature_list, basis_dict, feature_alphas):
     """
@@ -113,6 +128,6 @@ def banded_ridge_iteration(data, current_feat, prev_feats, alphas, info, basis_d
             # Compute correlation per channel
             for ch in range(num_ch):
                 # Assumes pairwise_correlation returns (r, p)
-                corrs[trl, a_idx, ch] = pairwise_correlation(y_test[:, ch], pred_y[:, ch])[0]
+                corrs[trl, a_idx, ch] = pairwise_correlation(y_test[:, ch], pred_y[:, ch])
                 
     return coef_dict, corrs
