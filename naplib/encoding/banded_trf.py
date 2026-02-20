@@ -192,7 +192,8 @@ class BandedTRF(BaseEstimator):
         data : naplib.Data
             Data to predict.
         feature_names : list of str, optional
-            Features to use for prediction. Defaults to all features in feature_order_.
+            Features to use for prediction. Defaults to all features in 
+            `feature_order` used during fit.
         """
         if self.model_ is None:
             raise ValueError("Model must be fitted before calling predict.")

@@ -7,8 +7,18 @@ TRF
 ---
 
 .. autoclass:: TRF
-	:members:
-	:exclude-members: get_params, set_params
+    :members:
+    :exclude-members: get_params, set_params
 
 .. minigallery:: naplib.encoding.TRF
-        :add-heading: Examples using ``TRF ``
+        :add-heading: Examples using ``TRF``
+
+BandedTRF
+---------
+
+.. autoclass:: BandedTRF
+    :members:
+    :exclude-members: get_params, set_params
+
+.. minigallery:: naplib.encoding.BandedTRF
+        :add-heading: Examples using ``BandedTRF``
