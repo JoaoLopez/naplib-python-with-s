@@ -3,13 +3,18 @@
 Banded Ridge: Envelope vs. Acoustic Peak Rate
 ===================================================
 
-This example demonstrates how to use BandedTRF to handle correlated features. 
-We fit a model using the broadband speech envelope and the "peak rate" of 
-the auditory spectrogram. By fitting the envelope first, we can determine 
-if discrete peak rate events add unique predictive power (Delta R).
+This example demonstrates how to fit a BandedTRF model to neural data using
+correlated acoustic features. We compare a broadband speech envelope with
+discrete acoustic "peak rate" events.
+
+Specifically, we examine:
+1. Iterative Alpha Optimization (Alpha Paths) with peak detection.
+2. Incremental predictive power (Delta R).
+3. Model stability across different feature fitting orders.
 """
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.signal import resample
 import naplib as nl
@@ -18,113 +23,130 @@ from naplib.encoding import BandedTRF
 ###############################################################################
 # 1. Prepare the Data
 # -------------------
-# We compute the envelope by summing the auditory spectrogram over frequency
-# bins, then compute peak rate using the dedicated naplib feature function.
 
 data = nl.io.load_speech_task_data()
 
 # Preprocess responses
 data['resp'] = nl.preprocessing.normalize(data=data, field='resp')
 
-# Step A: Compute high-res auditory spectrogram (usually 128 bins)
-# We use a sampling rate of 11025 Hz for the feature extraction
+# Step A: Compute high-res auditory spectrogram
 spec_fs, feat_fs = 11025, 100
 data['spec'] = [nl.features.auditory_spectrogram(trl['sound'], spec_fs) for trl in data]
-
-# Make sure the spectrogram is the exact same size as the responses
 data['spec'] = [resample(trial['spec'], trial['resp'].shape[0]) for trial in data] 
 
 # Step B: Compute Envelope and Peak Rate
-# Peak rate uses the spectrogram to find acoustic landmarks
 data['env_raw'] = [np.sum(trl['spec'], axis=1) for trl in data]
 data['pk_raw'] = [nl.features.peak_rate(trl['spec'], feat_fs, band=[1, 10]) for trl in data]
 
-# Step C: Resample features to match neural sampling rate (sfreq=100)
-# Make sure the lengths match the response exactly
+# Step C: Final alignment
 data['env'] = [resample(e, r.shape[0]) for e, r in zip(data['env_raw'], data['resp'])]
 data['peak_rate'] = [resample(p, r.shape[0]) for p, r in zip(data['pk_raw'], data['resp'])]
 
-# --- Visualization: Compare Stimulus Features ---
-plt.figure(figsize=(10, 3))
-plt.plot(data[0]['env'][:500] / np.max(data[0]['env']), label='Envelope (norm)', alpha=0.8)
-plt.plot(data[0]['peak_rate'][:500] / np.max(data[0]['peak_rate']), label='Peak Rate (norm)', alpha=0.8)
-plt.title('Stimulus Features: First 5 Seconds (Normalized for Viewing)')
-plt.xlabel('Samples')
-plt.legend()
-plt.show()
+###############################################################################
+# 2. Fit the BandedTRF (Order 1: Env -> Peak Rate)
+# ------------------------------------------------
+
+tmin, tmax, sfreq = -0.1, 0.6, 100
+alphas = np.logspace(-2, 5, 15) 
+order_1 = ['env', 'peak_rate']
+
+model1 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
+model1.fit(data=data[:-1], feature_order=order_1, target='resp')
+
+# Evaluate Order 1
+r_mat_full1 = nl.stats.pairwise_correlation(data[-1]['resp'], model1.predict(data[-1:])[0])
+r_full_1 = np.diag(r_mat_full1)
+
+r_mat_env_only = nl.stats.pairwise_correlation(data[-1]['resp'], model1.predict(data[-1:], feature_names=['env'])[0])
+r_env_only = np.diag(r_mat_env_only)
+dr_peak_rate = r_full_1 - r_env_only
 
 ###############################################################################
-# 2. Fit the BandedTRF
-# --------------------
+# 3. Fit the BandedTRF (Order 2: Peak Rate -> Env)
+# ------------------------------------------------
 
-tmin, tmax, sfreq = 0, 0.4, 100
-alphas = np.logspace(-1, 5, 10) 
-feature_order = ['env', 'peak_rate']
+order_2 = ['peak_rate', 'env']
+model2 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
+model2.fit(data=data[:-1], feature_order=order_2, target='resp')
 
-model = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
-model.fit(data=data[:-1], feature_order=feature_order, target='resp')
+# Evaluate Order 2
+r_mat_full2 = nl.stats.pairwise_correlation(data[-1]['resp'], model2.predict(data[-1:])[0])
+r_full_2 = np.diag(r_mat_full2)
 
-print(f"Optimized Alphas: {model.feature_alphas_}")
+r_mat_pk_only = nl.stats.pairwise_correlation(data[-1]['resp'], model2.predict(data[-1:], feature_names=['peak_rate'])[0])
+r_pk_only = np.diag(r_mat_pk_only)
+dr_env = r_full_2 - r_pk_only
 
 ###############################################################################
-# 3. Analyze Alpha Paths and Delta R
-# ------------------------------------
+# 4. Visualization: Alpha Paths with Peak Markers
+# -----------------------------------------------
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-# Plot Alpha Paths
-for feat in feature_order:
-    axes[0].semilogx(alphas, model.alpha_paths_[feat], marker='o', label=feat)
-axes[0].set_title('Regularization Sweep (Alpha Paths)')
-axes[0].set_xlabel('Alpha')
-axes[0].set_ylabel('Mean Correlation (r)')
+# Plot Alpha Paths for Order 1
+colors = {'env': '#1f77b4', 'peak_rate': '#d62728'}
+for feat in order_1:
+    path = model1.alpha_paths_[feat]
+    best_alpha = model1.feature_alphas_[feat]
+    
+    # Plot the full line
+    axes[0].semilogx(alphas, path, marker='o', label=feat, color=colors[feat], alpha=0.6)
+    
+    # Highlight the peak
+    peak_val = np.max(path)
+    axes[0].plot(best_alpha, peak_val, 'r*', markersize=15, 
+                 markeredgecolor='k', label=f'Best {feat}')
+
+axes[0].set_title('Optimization Paths (Order: Env → Peak Rate)')
+axes[0].set_xlabel('Alpha ($\lambda$)')
+axes[0].set_ylabel('Mean Cross-Validated $r$')
 axes[0].legend()
 
-# Compute Mean Delta R on test data
-# nl.stats.pairwise_correlation returns the full matrix; we take the diagonal
-r_mat_env = nl.stats.pairwise_correlation(data[-1]['resp'], model.predict(data[-1:], feature_names=['env'])[0])
-r_env_channels = np.diag(r_mat_env)
-r_env = np.mean(r_env_channels)
-
-r_mat_all = nl.stats.pairwise_correlation(data[-1]['resp'], model.predict(data[-1:])[0])
-r_all_channels = np.diag(r_mat_all)
-r_all = np.mean(r_all_channels)
-
-axes[1].bar(['Envelope Only', 'Env + Peak Rate'], [r_env, r_all], color=['#1f77b4', '#d62728'])
-axes[1].set_ylim([min(r_env, r_all) * 0.9, max(r_env, r_all) * 1.1])
-axes[1].set_title(f'Improvement (Delta R): {r_all - r_env:.4f}')
-axes[1].set_ylabel('Pearson r')
+# Delta R comparison
+labels = ['Peak Rate Gain\n(After Env)', 'Envelope Gain\n(After Peak Rate)']
+dr_values = [np.mean(dr_peak_rate), np.mean(dr_env)]
+axes[1].bar(labels, dr_values, color=[colors['peak_rate'], colors['env']])
+axes[1].set_title('Incremental Predictive Power ($\Delta R$)')
+axes[1].set_ylabel('Mean Gain in Pearson $r$')
 
 plt.tight_layout()
 plt.show()
 
 ###############################################################################
-# 4. Compare TRF Kernels
-# ----------------------
+# 5. Consistency and Kernel Visualization
+# ---------------------------------------
 
-full_coefs = model.coef_ # (channels, features, lags)
-elec = np.argmax(r_all_channels) # Select channel with best overall fit
-lags = np.linspace(tmin, tmax, full_coefs.shape[-1])
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-fig, ax = plt.subplots(figsize=(8, 4))
-ax.plot(lags, full_coefs[elec, 0, :], label='Envelope TRF', lw=2.5)
-ax.plot(lags, full_coefs[elec, 1, :], label='Peak Rate TRF', lw=2.5)
-ax.axhline(0, color='k', linestyle='--', alpha=0.3)
-ax.set_title(f'Comparison of TRF Kernels (Electrode {elec})')
-ax.set_xlabel('Time (s)')
-ax.set_ylabel('Weight (a.u.)')
-ax.legend()
+# Scatterplot of full model r
+ax1.scatter(r_full_1, r_full_2, alpha=0.6, edgecolors='w')
+max_r = max(r_full_1.max(), r_full_2.max())
+ax1.plot([0, max_r], [0, max_r], 'k--', alpha=0.5, label='Unity')
+ax1.set_title('Total Prediction Consistency ($r_{full}$)')
+ax1.set_xlabel('Order 1: Env → Peak Rate')
+ax1.set_ylabel('Order 2: Peak Rate → Env')
+ax1.legend()
+
+# Kernel comparison for best channel
+elec = np.argmax(r_full_1)
+lags = np.linspace(tmin, tmax, model1.coef_.shape[-1])
+ax2.plot(lags, model1.coef_[elec, 0, :], label='Envelope TRF', lw=2.5, color=colors['env'])
+ax2.plot(lags, model1.coef_[elec, 1, :], label='Peak Rate TRF', lw=2.5, color=colors['peak_rate'])
+ax2.axhline(0, color='k', linestyle='--', alpha=0.3)
+ax2.set_title(f'TRF Kernels (Electrode {elec})')
+ax2.set_xlabel('Time (s)')
+ax2.legend()
+
 plt.tight_layout()
 plt.show()
 
 ###############################################################################
-# 5. Spatial Distribution of Delta R
-# ----------------------------------
-# We visualize which brain regions benefited most from adding Peak Rate.
+# 6. Summary Table
+# ----------------
+res_df = pd.DataFrame({
+    'Order 1': [np.mean(r_full_1), np.mean(dr_peak_rate)],
+    'Order 2': [np.mean(r_full_2), np.mean(dr_env)]
+}, index=['Mean Full R', 'Mean Delta R'])
 
-delta_r_channels = r_all_channels - r_env_channels
-
-fig, ax = plt.subplots(figsize=(5, 5))
-nl.visualization.plot_topomap(delta_r_channels, data.info['mne_info'], ax=ax)
-ax.set_title('Delta R (Peak Rate Gain)')
-plt.show()
+print("\n--- Model Performance Summary ---")
+print(res_df)
