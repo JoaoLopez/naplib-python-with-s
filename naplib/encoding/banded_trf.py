@@ -38,7 +38,7 @@ class BandedTRF(BaseEstimator):
         self.feature_alphas_ = {}
         self.alpha_paths_ = {}
         self.feature_order_ = []
-        self.model_ = None
+        self.model_ = None # Will store a list of fitted Ridge models (one per trial)
         self.target_ = None
         self.scores_ = None # Shape: (n_trials, n_channels, n_features)
 
@@ -49,16 +49,21 @@ class BandedTRF(BaseEstimator):
     @property
     def coef_(self):
         """
-        Reshaped coefficients of shape (n_targets, n_features, n_delays).
+        Reshaped coefficients of shape (n_targets, n_features, n_delays, n_trials).
         """
         if self.model_ is None:
             return None
         
-        n_targets = self.model_.coef_.shape[0]
+        n_trials = len(self.model_)
+        n_targets = self.model_[0].coef_.shape[0]
         n_feats = len(self.feature_order_)
         
-        # MNE _delay_time_series output is (n_samples, n_feats * n_delays)
-        return self.model_.coef_.reshape(n_targets, n_feats, self._ndelays)
+        # Stack coefficients from all trial models: (n_targets, n_feats * n_delays, n_trials)
+        all_coefs = np.stack([m.coef_ for m in self.model_], axis=-1)
+        
+        # Reshape to (n_targets, n_delays, n_feats, n_trials) 
+        # then transpose to (n_targets, n_feats, n_delays, n_trials)
+        return all_coefs.reshape(n_targets, n_feats, self._ndelays, n_trials)
 
     def _prepare_matrix(self, X_list, feature_names, alphas_dict):
         processed_trials = []
@@ -69,7 +74,6 @@ class BandedTRF(BaseEstimator):
             for i, name in enumerate(feature_names):
                 x = X_list[i][trl]
                 
-                # Extract array if trial is wrapped in a single-element list
                 if isinstance(x, list) and len(x) == 1:
                     x = x[0]
                 
@@ -102,13 +106,11 @@ class BandedTRF(BaseEstimator):
         n_trials = len(y)
         self.n_targets_ = y[0].shape[1]
         
-        # Standardize all features into a list of trial-lists
         all_features_data = []
         for f in feature_order:
             f_data = _parse_outstruct_args(data, f)
             all_features_data.append(f_data if isinstance(f_data, list) else [f_data])
 
-        # Cache cross-validated R scores: (trials, channels, features)
         self.scores_ = np.zeros((n_trials, self.n_targets_, len(feature_order)))
 
         for i, current_feat in enumerate(feature_order):
@@ -141,11 +143,10 @@ class BandedTRF(BaseEstimator):
             self.alpha_paths_[current_feat] = np.array(r_history)
             self.scores_[:, :, i] = best_r_per_trial_ch
 
-        # Final fit on all data
+        # Final fit on each trial separately
         final_X = self._prepare_matrix(all_features_data, feature_order, self.feature_alphas_)
-        self.model_ = Ridge(alpha=1.0).fit(np.concatenate(final_X), np.concatenate(y))
+        self.model_ = [Ridge(alpha=1.0).fit(tx, ty) for tx, ty in zip(final_X, y)]
         
-        # Record feature dimensions for partial prediction masking
         self.feat_dims_ = []
         for i, name in enumerate(feature_order):
             x_sample = all_features_data[i][0]
@@ -170,33 +171,50 @@ class BandedTRF(BaseEstimator):
             feat_data_list.append(f_data if isinstance(f_data, list) else [f_data])
 
         X_mats = self._prepare_matrix(feat_data_list, requested_features, self.feature_alphas_)
+        n_trials = len(X_mats)
         
+        if n_trials != len(self.model_):
+            raise ValueError(
+                f"LOTO predict requires the same number of trials ({len(self.model_)}) "
+                f"as used in fit. Found {n_trials} trials."
+            )
+
+        # Pre-extract all weights and intercepts for efficient averaging
+        all_coefs = np.array([m.coef_ for m in self.model_]) # (n_trials, n_targets, n_features_total)
+        all_intercepts = np.array([m.intercept_ for m in self.model_]) # (n_trials, n_targets)
+
+        # Handle feature masking if a subset is requested
+        mask = np.ones(all_coefs.shape[2], dtype=bool)
         if feature_names is not None:
-            preds = []
-            full_coef = self.model_.coef_ 
-            mask = np.zeros(full_coef.shape[1], dtype=bool)
+            mask = np.zeros(all_coefs.shape[2], dtype=bool)
             current_col = 0
             for i, f in enumerate(self.feature_order_):
                 num_cols = self.feat_dims_[i] * self._ndelays
                 if f in requested_features:
                     mask[current_col : current_col + num_cols] = True
                 current_col += num_cols
+
+        preds = []
+        for i in range(n_trials):
+            # Indices for all trials except the current one
+            loto_indices = [j for j in range(n_trials) if j != i]
             
-            sliced_coef = full_coef[:, mask]
-            for x_trl in X_mats:
-                preds.append(x_trl @ sliced_coef.T + self.model_.intercept_)
-            return preds
-        
-        return [self.model_.predict(x) for x in X_mats]
+            # Average coefficients and intercepts from the other trials
+            loto_coef = np.mean(all_coefs[loto_indices], axis=0)
+            loto_intercept = np.mean(all_intercepts[loto_indices], axis=0)
+            
+            # Apply feature mask
+            sliced_coef = loto_coef[:, mask]
+            
+            # Predict for the current trial
+            preds.append(X_mats[i] @ sliced_coef.T + loto_intercept)
+            
+        return preds
 
     def summary(self, channel=None):
-        r"""
-        Generate a statistical summary using scores captured during fit.
-        """
         if self.scores_ is None:
             raise ValueError("Model must be fitted before calling summary.")
 
-        # Calculate Delta R (improvement at each band addition)
         dr_tensor = np.diff(self.scores_, axis=2, prepend=0)
 
         if channel is not None:
@@ -211,8 +229,6 @@ class BandedTRF(BaseEstimator):
         summary_results = []
         for f_idx, feat in enumerate(self.feature_order_):
             sample = dr_report[:, f_idx]
-            
-            # Robust t-test: handle NaNs and zero variance
             clean_sample = sample[~np.isnan(sample)]
             if len(clean_sample) < 2 or np.all(clean_sample == clean_sample[0]):
                 p_val = 1.0 if np.mean(clean_sample) <= 0 else 0.0

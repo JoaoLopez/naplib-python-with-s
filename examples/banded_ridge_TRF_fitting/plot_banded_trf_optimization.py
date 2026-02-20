@@ -41,7 +41,7 @@ data['peak_rate'] = [nl.features.peak_rate(trl['spec'], feat_fs, band=[1, 10]) f
 data['peak_rate_onset'] = [(trl > 0).astype(float) for trl in data['peak_rate']]
 
 # Step C: Final alignment and "Null" Noise Injection
-np.random.seed(0)
+np.random.seed(1)
 for i, trial in enumerate(data):    
     # Null Band: Gaussian noise scaled to match envelope variance
     noise = np.random.randn(trial['resp'].shape[0])
@@ -143,9 +143,14 @@ for i, (mdl, ord_list, title) in enumerate(zip([model1, model2],
                                                [order_1, order_2], 
                                                ['Kernels (Order 1)', 'Kernels (Order 2)'])):
     for f_idx, feat in enumerate(ord_list):
-        axes[i].plot(lags, mdl.coef_[best_ch, f_idx, :], 
-                     label=feat, color=colors[feat], lw=2 if feat != 'noise' else 1,
-                     linestyle='-' if feat != 'noise' else '--')
+        nl.visualization.shaded_error_plot(
+            lags, mdl.coef_[best_ch, f_idx, :],
+            ax=axes[i], color=colors[feat],
+            plt_args={'label':feat, 'lw':2}
+        )
+        # axes[i].plot(lags, mdl.coef_[best_ch, f_idx, :], 
+        #              label=feat,  lw=2 if feat != 'noise' else 1,
+        #              linestyle='-' if feat != 'noise' else '--')
     
     axes[i].axhline(0, color='black', alpha=0.5)
     axes[i].axvline(0, color='black', alpha=0.5)
