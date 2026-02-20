@@ -211,34 +211,50 @@ def discriminability(D, L, elec_mode='all', method='lda'):
     return f_stat
 
 
+import numpy as np
+
 def pairwise_correlation(A, B):
-    """
-    Computes Pearson correlation coefficient between corresponding columns of A and B.
-    Works for 1D vectors (returns scalar) and 2D matrices (returns correlation matrix).
+    r"""
+    Compute Pearson correlation between corresponding columns of A and B.
+    
+    If inputs are 2D (time, channels), returns a 1D array of correlations 
+    where the i-th element is the correlation between A[:, i] and B[:, i].
+    If inputs are 1D, returns a single float.
     
     Parameters
     ----------
     A : np.ndarray
-        First array (time, channels)
+        First array, shape (n_samples, n_channels) or (n_samples,).
     B : np.ndarray
-        Second array (time, channels)
+        Second array, shape (n_samples, n_channels) or (n_samples,).
         
     Returns
     -------
-    corr : float or np.ndarray
-        Correlation(s). If 2D, the diagonal of the resulting matrix represents 
-        the channel-wise correlations.
+    corr : np.ndarray or float
+        Column-wise correlations.
     """
+    # Ensure inputs are at least 1D
+    A = np.asarray(A)
+    B = np.asarray(B)
+    
+    # Standardize: Center the data
     am = A - np.mean(A, axis=0)
     bm = B - np.mean(B, axis=0)
     
-    # Use np.dot to handle both 1D and 2D cases
-    coscale = np.dot(am.T, bm)
-    a_ss = np.power(np.linalg.norm(am, axis=0), 2)
-    b_ss = np.power(np.linalg.norm(bm, axis=0), 2)
+    # Compute column-wise sum of squares (variance proxy)
+    # Using einsum or axis-based sum for robustness
+    a_ss = np.sum(am**2, axis=0)
+    b_ss = np.sum(bm**2, axis=0)
     
-    # For 1D inputs, am.T @ bm is a scalar. For 2D, we normalize by the outer product of norms.
-    if np.isscalar(coscale):
-        return coscale / np.sqrt(a_ss * b_ss + 1e-15)
+    # Compute column-wise covariance proxy
+    # For 2D: pairwise product sum across the time axis (axis 0)
+    # For 1D: simple dot product
+    if A.ndim == 1:
+        coscale = np.dot(am, bm)
     else:
-        return coscale / np.sqrt(np.outer(a_ss, b_ss) + 1e-15)
+        # Summing product across the 'time' dimension for each channel
+        coscale = np.sum(am * bm, axis=0)
+        
+    # Return normalized correlation
+    # 1e-15 added to denominator to prevent division by zero
+    return coscale / (np.sqrt(a_ss * b_ss) + 1e-15)
