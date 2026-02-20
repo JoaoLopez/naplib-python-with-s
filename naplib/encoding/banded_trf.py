@@ -1,133 +1,166 @@
+import copy
 import numpy as np
-import pandas as pd
-from scipy import signal as sig
+from tqdm.auto import tqdm
+from sklearn.base import BaseEstimator
 from sklearn.linear_model import Ridge
-from mne.decoding.receptive_field import _delay_time_series as time_lag
+from mne.decoding.receptive_field import _delay_time_series
+from .utils import _parse_outstruct_args
 
 def pairwise_correlation(A, B):
-    # If inputs are 1D, ensure they are treated as vectors
-    # This version works for both 1D and 2D
+    """
+    Computes Pearson correlation. Works for 1D vectors (returns scalar) 
+    and 2D matrices (returns dot product covariance / normalization).
+    """
     am = A - np.mean(A, axis=0)
     bm = B - np.mean(B, axis=0)
     
-    # Using np.dot for 1D or am.T @ bm for 2D
-    # For 1D vectors, am @ bm is a scalar
+    # Using np.dot handles 1D vectors naturally
     coscale = np.dot(am, bm)
     a_ss = np.dot(am, am)
     b_ss = np.dot(bm, bm)
     
-    return coscale / np.sqrt(a_ss * b_ss)
+    return coscale / np.sqrt(a_ss * b_ss + 1e-15)
 
-def prepare_feature_matrix(trial_data, feature_list, basis_dict, feature_alphas):
+class BandedTRF(BaseEstimator):
     """
-    Concatenates multiple feature tracks into a single matrix, applying 
-    non-linear bases and alpha-scaling.
+    Class for fitting iterative Banded Ridge TRF models to neural data.
+    
+    Features are added and optimized one-by-one. Each subsequent feature's 
+    alpha is optimized while previously added features are held constant 
+    at their optimal regularization levels.
     
     Parameters
     ----------
-    trial_data : dict
-        A single trial dictionary containing feature arrays.
-    feature_list : list of str
-        The features to include in the matrix.
-    basis_dict : dict
-        Mapping of feature names to basis functions (e.g., splines).
-    feature_alphas : dict
-        Mapping of feature names to their optimized ridge regularization values.
-        Features are scaled by 1/alpha for banded ridge regression.
-
-    Returns
-    -------
-    X : ndarray, shape (time, features)
-        The design matrix for the current trial.
+    tmin : float
+        Starting lag (seconds).
+    tmax : float
+        Ending lag (seconds).
+    sfreq : float
+        Sampling frequency (Hz).
+    alphas : ndarray, optional
+        Alphas to sweep for each feature. Default is np.logspace(-2, 5, 8).
+    basis_dict : dict, optional
+        Basis expansion functions/objects for specific features.
     """
-    mats = []
-    for ft in feature_list:
-        # Ensure 2D (time x feature_dims)
-        x = np.atleast_2d(trial_data[ft].T).T
-        
-        # Apply Spline/Basis expansion if defined in analyze_features
-        if ft in basis_dict:
-            x = apply_bases(x, basis_dict[ft])
-        
-        # Scale by optimized alpha (default to 1.0 if not yet optimized)
-        alpha = feature_alphas.get(ft, 1.0) 
-        mats.append(x / alpha)
-        
-    return np.concatenate(mats, axis=1) if mats else None
+    def __init__(self, tmin, tmax, sfreq, alphas=None, basis_dict=None):
+        self.tmin = tmin
+        self.tmax = tmax
+        self.sfreq = sfreq
+        self.alphas = alphas if alphas is not None else np.logspace(-2, 5, 8)
+        self.basis_dict = basis_dict if basis_dict is not None else {}
+        self.feature_alphas_ = {}
+        self.feature_order_ = []
+        self.model_ = None
 
+    @property
+    def _ndelays(self):
+        return int(round(self.tmax * self.sfreq)) - int(round(self.tmin * self.sfreq)) + 1
 
-
-def banded_ridge_iteration(data, current_feat, prev_feats, alphas, info, basis_dict, feature_alphas):
-    """
-    Execute a single iteration of the banded ridge regression pipeline. 
-    Determines the optimal alpha for a new feature given a set of 
-    previously optimized "background" features.
-
-    Parameters
-    ----------
-    data : list of dict
-        The naplib data object containing 'eeg' and feature tracks.
-    current_feat : str
-        The name of the feature currently being optimized.
-    prev_feats : list of str
-        Features that have already been optimized in previous iterations.
-    alphas : ndarray
-        Array of alpha values to sweep over for cross-validation.
-    info : dict
-        Metadata containing 'fs', 'tmin', and 'tmax' for time-lagging.
-    basis_dict : dict
-        Basis functions for spline expansion.
-    feature_alphas : dict
-        Optimized alphas for `prev_feats`.
-
-    Returns
-    -------
-    coef_dict : dict
-        Nested dictionary of coefficients: `coef_dict[trial_idx][alpha_val]`.
-    corrs : ndarray, shape (trials, alphas, channels)
-        Correlation coefficients for every trial, alpha, and EEG channel.
-    """
-    num_trials = len(data)
-    num_ch = data[0]['eeg'].shape[1]
-    fs, tmin, tmax = info['fs'], info['tmin'], info['tmax']
-    
-    coef_dict = {trl: {} for trl in range(num_trials)}
-    
-    # Training: Fit Ridge for every trial and every alpha
-    for trl in range(num_trials):
-        x_base = prepare_feature_matrix(data[trl], prev_feats, basis_dict, feature_alphas)
-        y = data[trl]['eeg']
+    def _prepare_matrix(self, X_list, feature_names, alphas_dict):
+        """Prepares design matrix by applying bases, scaling by alpha, and time-lagging."""
+        processed_trials = []
+        num_trials = len(X_list[0])
         
-        for alpha in alphas:
-            x_new = prepare_feature_matrix(data[trl], [current_feat], basis_dict, {current_feat: alpha})
-            x_total = np.concatenate([x_base, x_new], axis=1) if x_base is not None else x_new
-            
-            # Expand to Toeplitz matrix for TRF estimation
-            x_lag = time_lag(x_total, tmin, tmax, fs).reshape(x_total.shape[0], -1)
-            x_lag = np.nan_to_num(x_lag)
-            
-            mdl = Ridge(alpha=1, solver='cholesky')
-            mdl.fit(x_lag, y)
-            coef_dict[trl][alpha] = mdl.coef_
-            
-    # Validation: Leave-one-trial-out prediction
-    corrs = np.zeros((num_trials, len(alphas), num_ch))
-    for trl in range(num_trials):
-        y_test = data[trl]['eeg']
-        x_base = prepare_feature_matrix(data[trl], prev_feats, basis_dict, feature_alphas)
-        
-        for a_idx, alpha in enumerate(alphas):
-            x_new = prepare_feature_matrix(data[trl], [current_feat], basis_dict, {current_feat: alpha})
-            x_test = np.concatenate([x_base, x_new], axis=1) if x_base is not None else x_new
-            x_test_lag = np.nan_to_num(time_lag(x_test, tmin, tmax, fs).reshape(x_test.shape[0], -1))
-            
-            # Average coefficients from training trials (LOO)
-            avg_coef = np.mean([coef_dict[t][alpha] for t in range(num_trials) if t != trl], axis=0)
-            pred_y = x_test_lag @ avg_coef.T
-            
-            # Compute correlation per channel
-            for ch in range(num_ch):
-                # Assumes pairwise_correlation returns (r, p)
-                corrs[trl, a_idx, ch] = pairwise_correlation(y_test[:, ch], pred_y[:, ch])
+        for trl in range(num_trials):
+            mats = []
+            for i, name in enumerate(feature_names):
+                x = X_list[i][trl]
+                if x.ndim == 1:
+                    x = x[:, np.newaxis]
                 
-    return coef_dict, corrs
+                # Apply basis expansion
+                if name in self.basis_dict:
+                    # Logic for apply_bases or transformer object
+                    x = apply_bases(x, self.basis_dict[name]) 
+                
+                alpha = alphas_dict.get(name, 1.0)
+                mats.append(x / alpha)
+            
+            concatenated = np.concatenate(mats, axis=1)
+            # Time lagging used by naplib internally
+            
+            delayed = _delay_time_series(concatenated, self.tmin, self.tmax, self.sfreq)
+            processed_trials.append(delayed.reshape(delayed.shape[0], -1))
+            
+        return processed_trials
+
+    def fit(self, data, feature_order, target='resp'):
+        """
+        Fit features iteratively.
+        
+        Parameters
+        ----------
+        data : naplib.Data
+            The Data object containing trials.
+        feature_order : list of str
+            Order in which features are added and optimized.
+        target : str
+            Field name of the target response (e.g., 'eeg').
+        """
+        self.feature_order_ = feature_order
+        _, y = _parse_outstruct_args(data, feature_order[0], target)
+        self.n_targets_ = y[0].shape[1]
+        
+        # Load data once
+        all_features_data = []
+        for feat in feature_order:
+            feat_data, _ = _parse_outstruct_args(data, feat, target)
+            all_features_data.append(feat_data)
+
+        for i, current_feat in enumerate(feature_order):
+            best_alpha = None
+            max_r = -np.inf
+            
+            for alpha in tqdm(self.alphas, desc=f"Optimizing {current_feat}", leave=False):
+                temp_alphas = {**self.feature_alphas_, current_feat: alpha}
+                X_mats = self._prepare_matrix(all_features_data[:i+1], feature_order[:i+1], temp_alphas)
+                
+                # Cross-validation over trials
+                trial_corrs = []
+                for test_idx in range(len(X_mats)):
+                    X_train = np.concatenate([X_mats[j] for j in range(len(X_mats)) if j != test_idx])
+                    y_train = np.concatenate([y[j] for j in range(len(y)) if j != test_idx])
+                    
+                    mdl = Ridge(alpha=1.0).fit(X_train, y_train)
+                    y_pred = mdl.predict(X_mats[test_idx])
+                    
+                    # Compute mean correlation across channels
+                    # For multi-channel y, pairwise_correlation returns a diagonal of r's
+                    r = pairwise_correlation(y[test_idx], y_pred)
+                    trial_corrs.append(np.mean(np.diag(r)) if r.ndim > 1 else r)
+                
+                avg_r = np.mean(trial_corrs)
+                if avg_r > max_r:
+                    max_r = avg_r
+                    best_alpha = alpha
+            
+            self.feature_alphas_[current_feat] = best_alpha
+
+        # Final fit on all data
+        final_X = self._prepare_matrix(all_features_data, feature_order, self.feature_alphas_)
+        self.model_ = Ridge(alpha=1.0).fit(np.concatenate(final_X), np.concatenate(y))
+        return self
+
+    @property
+    def coef_(self):
+        """
+        TRF weights of shape (n_targets, n_features_total, n_lags).
+        """
+        if self.model_ is None:
+            raise ValueError("Model not fitted.")
+        return self.model_.coef_.reshape(self.n_targets_, -1, self._ndelays)
+
+    def predict(self, data):
+        """
+        Returns predictions for each trial in data.
+        """
+        if self.model_ is None:
+            raise ValueError("Model not fitted.")
+        
+        feat_data_list = []
+        for feat in self.feature_order_:
+            fd, _ = _parse_outstruct_args(data, feat)
+            feat_data_list.append(fd)
+            
+        X_mats = self._prepare_matrix(feat_data_list, self.feature_order_, self.feature_alphas_)
+        return [self.model_.predict(x) for x in X_mats]

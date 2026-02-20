@@ -1,4 +1,9 @@
-from .trf import TRF
-from .banded_trf import banded_ridge_iteration
+'''
+Models for encoding and decoding neural data, such as
+Temporal Receptive Fields (TRFs).
+'''
 
-__all__ = ['TRF', 'banded_ridge_iteration']
+from .trf import TRF
+from .banded_trf import BandedTRF
+
+__all__ = ['TRF', 'BandedTRF']
