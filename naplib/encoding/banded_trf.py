@@ -74,23 +74,30 @@ class BandedTRF(BaseEstimator):
     def _ndelays(self):
         return int(round(self.tmax * self.sfreq)) - int(round(self.tmin * self.sfreq)) + 1
 
-    def _prepare_matrix(self, X_list, feature_names, alphas_dict):
-        """Prepares design matrix list (one per trial) scaled by alpha."""
+def _prepare_matrix(self, X_list, feature_names, alphas_dict):
         processed_trials = []
-        for trl in range(len(X_list[0])):
+        n_trials = len(X_list[0])
+        
+        for trl in range(n_trials):
             mats = []
             for i, name in enumerate(feature_names):
                 x = X_list[i][trl]
+                
+                # Ensure x is at least 2D (time, features)
+                if np.isscalar(x):
+                    continue # This prevents the zero-dim concatenation error
                 if x.ndim == 1:
                     x = x[:, np.newaxis]
                 
-                # Apply basis expansion
                 if name in self.basis_dict:
                     x = self.basis_dict[name].transform(x) 
                 
                 alpha = alphas_dict.get(name, 1.0)
                 mats.append(x / alpha)
             
+            if not mats:
+                raise ValueError("No features were successfully processed. Check feature_names.")
+                
             concatenated = np.concatenate(mats, axis=1)
             delayed = _delay_time_series(concatenated, self.tmin, self.tmax, self.sfreq)
             processed_trials.append(delayed.reshape(delayed.shape[0], -1))
@@ -186,20 +193,49 @@ class BandedTRF(BaseEstimator):
     def predict(self, data, feature_names=None):
         """
         Predict response using the fitted model.
-        
-        Parameters
-        ----------
-        data : naplib.Data
-            Data to predict.
-        feature_names : list of str, optional
-            Features to use for prediction. Defaults to all features in 
-            `feature_order` used during fit.
         """
         if self.model_ is None:
             raise ValueError("Model must be fitted before calling predict.")
         
-        feats = feature_names if feature_names else self.feature_order_
-        feat_data_list = [(_parse_outstruct_args(data, f)[0]) for f in feats]
+        # If no features specified, use the full order used during fit
+        requested_features = feature_names if feature_names else self.feature_order_
             
-        X_mats = self._prepare_matrix(feat_data_list, feats, self.feature_alphas_)
+        # Extract the data for ONLY the requested features
+        feat_data_list = []
+        for f in requested_features:
+            # Use the same utility as fit to ensure naming consistency
+            x_feat, _ = _parse_outstruct_args(data, f)
+            feat_data_list.append(x_feat)
+            
+        # CRITICAL: _prepare_matrix expects X_list and feature_names to match
+        X_mats = self._prepare_matrix(feat_data_list, requested_features, self.feature_alphas_)
+        
+        # Now, if we are predicting with a SUBSET of features, we must 
+        # slice the fitted coefficients to match only those features.
+        if feature_names is not None:
+            # Reconstruct the prediction manually using sliced coefs
+            preds = []
+            for x_trl in X_mats:
+                # Find the indices of the requested features in the original model
+                start_pts = [sum(self.feat_dims_[:i]) * self._ndelays for i, f in enumerate(self.feature_order_) if f in requested_features]
+                
+                # This gets complicated with the flattened Ridge model. 
+                # Simplest way: use the model's intercept and sliced coefficients.
+                full_coef = self.model_.coef_ # (n_targets, n_features_total * n_lags)
+                
+                # Create a mask for the columns belonging to requested features
+                mask = np.zeros(full_coef.shape[1], dtype=bool)
+                current_col = 0
+                for i, f in enumerate(self.feature_order_):
+                    num_cols = self.feat_dims_[i] * self._ndelays
+                    if f in requested_features:
+                        mask[current_col : current_col + num_cols] = True
+                    current_col += num_cols
+                
+                sliced_coef = full_coef[:, mask]
+                # y = X * beta + intercept
+                preds.append(x_trl @ sliced_coef.T + self.model_.intercept_)
+            return preds
+        
+        # If using all features, use the standard sklearn predict
         return [self.model_.predict(x) for x in X_mats]
