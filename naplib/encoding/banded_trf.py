@@ -4,39 +4,8 @@ from tqdm.auto import tqdm
 from sklearn.base import BaseEstimator
 from sklearn.linear_model import Ridge
 from mne.decoding.receptive_field import _delay_time_series
+from ..stats import pairwise_correlation
 from ..utils import _parse_outstruct_args
-
-def pairwise_correlation(A, B):
-    """
-    Computes Pearson correlation coefficient between corresponding columns of A and B.
-    Works for 1D vectors (returns scalar) and 2D matrices (returns correlation matrix).
-    
-    Parameters
-    ----------
-    A : np.ndarray
-        First array (time, channels)
-    B : np.ndarray
-        Second array (time, channels)
-        
-    Returns
-    -------
-    corr : float or np.ndarray
-        Correlation(s). If 2D, the diagonal of the resulting matrix represents 
-        the channel-wise correlations.
-    """
-    am = A - np.mean(A, axis=0)
-    bm = B - np.mean(B, axis=0)
-    
-    # Use np.dot to handle both 1D and 2D cases
-    coscale = np.dot(am.T, bm)
-    a_ss = np.power(np.linalg.norm(am, axis=0), 2)
-    b_ss = np.power(np.linalg.norm(bm, axis=0), 2)
-    
-    # For 1D inputs, am.T @ bm is a scalar. For 2D, we normalize by the outer product of norms.
-    if np.isscalar(coscale):
-        return coscale / np.sqrt(a_ss * b_ss + 1e-15)
-    else:
-        return coscale / np.sqrt(np.outer(a_ss, b_ss) + 1e-15)
 
 class BandedTRF(BaseEstimator):
     """
@@ -74,7 +43,7 @@ class BandedTRF(BaseEstimator):
     def _ndelays(self):
         return int(round(self.tmax * self.sfreq)) - int(round(self.tmin * self.sfreq)) + 1
 
-def _prepare_matrix(self, X_list, feature_names, alphas_dict):
+    def _prepare_matrix(self, X_list, feature_names, alphas_dict):
         processed_trials = []
         n_trials = len(X_list[0])
         
@@ -204,7 +173,7 @@ def _prepare_matrix(self, X_list, feature_names, alphas_dict):
         feat_data_list = []
         for f in requested_features:
             # Use the same utility as fit to ensure naming consistency
-            x_feat, _ = _parse_outstruct_args(data, f)
+            x_feat = _parse_outstruct_args(data, f)
             feat_data_list.append(x_feat)
             
         # CRITICAL: _prepare_matrix expects X_list and feature_names to match

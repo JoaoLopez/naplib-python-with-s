@@ -28,8 +28,11 @@ data['resp'] = nl.preprocessing.normalize(data=data, field='resp')
 
 # Step A: Compute high-res auditory spectrogram (usually 128 bins)
 # We use a sampling rate of 11025 Hz for the feature extraction
-feat_fs = 11025
-data['spec'] = [nl.features.auditory_spectrogram(trl['sound'], feat_fs) for trl in data]
+spec_fs, feat_fs = 11025, 100
+data['spec'] = [nl.features.auditory_spectrogram(trl['sound'], spec_fs) for trl in data]
+
+# Make sure the spectrogram is the exact same size as the responses
+data['spec'] = [resample(trial['spec'], trial['resp'].shape[0]) for trial in data] 
 
 # Step B: Compute Envelope and Peak Rate
 # Peak rate uses the spectrogram to find acoustic landmarks
@@ -53,15 +56,12 @@ plt.show()
 ###############################################################################
 # 2. Fit the BandedTRF
 # --------------------
-# We fit the 'env' first, followed by 'peak_rate'.
 
 tmin, tmax, sfreq = 0, 0.4, 100
 alphas = np.logspace(-1, 5, 10) 
 feature_order = ['env', 'peak_rate']
 
 model = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
-
-# Fit on all but the last trial
 model.fit(data=data[:-1], feature_order=feature_order, target='resp')
 
 print(f"Optimized Alphas: {model.feature_alphas_}")
@@ -80,12 +80,15 @@ axes[0].set_xlabel('Alpha')
 axes[0].set_ylabel('Mean Correlation (r)')
 axes[0].legend()
 
-# Compute Delta R on test data
-pred_env = model.predict(data[-1:], feature_names=['env'])
-r_env = np.mean(nl.evaluation.correlation(data[-1]['resp'], pred_env[0]))
+# Compute Mean Delta R on test data
+# nl.stats.pairwise_correlation returns the full matrix; we take the diagonal
+r_mat_env = nl.stats.pairwise_correlation(data[-1]['resp'], model.predict(data[-1:], feature_names=['env'])[0])
+r_env_channels = np.diag(r_mat_env)
+r_env = np.mean(r_env_channels)
 
-pred_all = model.predict(data[-1:])
-r_all = np.mean(nl.evaluation.correlation(data[-1]['resp'], pred_all[0]))
+r_mat_all = nl.stats.pairwise_correlation(data[-1]['resp'], model.predict(data[-1:])[0])
+r_all_channels = np.diag(r_mat_all)
+r_all = np.mean(r_all_channels)
 
 axes[1].bar(['Envelope Only', 'Env + Peak Rate'], [r_env, r_all], color=['#1f77b4', '#d62728'])
 axes[1].set_ylim([min(r_env, r_all) * 0.9, max(r_env, r_all) * 1.1])
@@ -98,10 +101,9 @@ plt.show()
 ###############################################################################
 # 4. Compare TRF Kernels
 # ----------------------
-# Extract coefficients for the last electrode to see the temporal tuning.
 
-elec = 10 
 full_coefs = model.coef_ # (channels, features, lags)
+elec = np.argmax(r_all_channels) # Select channel with best overall fit
 lags = np.linspace(tmin, tmax, full_coefs.shape[-1])
 
 fig, ax = plt.subplots(figsize=(8, 4))
@@ -113,4 +115,16 @@ ax.set_xlabel('Time (s)')
 ax.set_ylabel('Weight (a.u.)')
 ax.legend()
 plt.tight_layout()
+plt.show()
+
+###############################################################################
+# 5. Spatial Distribution of Delta R
+# ----------------------------------
+# We visualize which brain regions benefited most from adding Peak Rate.
+
+delta_r_channels = r_all_channels - r_env_channels
+
+fig, ax = plt.subplots(figsize=(5, 5))
+nl.visualization.plot_topomap(delta_r_channels, data.info['mne_info'], ax=ax)
+ax.set_title('Delta R (Peak Rate Gain)')
 plt.show()

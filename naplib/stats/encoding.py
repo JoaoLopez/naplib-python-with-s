@@ -210,3 +210,35 @@ def discriminability(D, L, elec_mode='all', method='lda'):
     
     return f_stat
 
+
+def pairwise_correlation(A, B):
+    """
+    Computes Pearson correlation coefficient between corresponding columns of A and B.
+    Works for 1D vectors (returns scalar) and 2D matrices (returns correlation matrix).
+    
+    Parameters
+    ----------
+    A : np.ndarray
+        First array (time, channels)
+    B : np.ndarray
+        Second array (time, channels)
+        
+    Returns
+    -------
+    corr : float or np.ndarray
+        Correlation(s). If 2D, the diagonal of the resulting matrix represents 
+        the channel-wise correlations.
+    """
+    am = A - np.mean(A, axis=0)
+    bm = B - np.mean(B, axis=0)
+    
+    # Use np.dot to handle both 1D and 2D cases
+    coscale = np.dot(am.T, bm)
+    a_ss = np.power(np.linalg.norm(am, axis=0), 2)
+    b_ss = np.power(np.linalg.norm(bm, axis=0), 2)
+    
+    # For 1D inputs, am.T @ bm is a scalar. For 2D, we normalize by the outer product of norms.
+    if np.isscalar(coscale):
+        return coscale / np.sqrt(a_ss * b_ss + 1e-15)
+    else:
+        return coscale / np.sqrt(np.outer(a_ss, b_ss) + 1e-15)
