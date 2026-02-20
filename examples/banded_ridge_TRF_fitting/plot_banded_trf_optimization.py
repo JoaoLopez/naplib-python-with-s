@@ -38,8 +38,10 @@ data['spec'] = [resample(trial['spec'], trial['resp'].shape[0]) for trial in dat
 # Step B: Compute Envelope and Peak Rate
 data['env'] = [zscore(np.sum(trl['spec'], axis=1)) for trl in data]
 data['peak_rate'] = [nl.features.peak_rate(trl['spec'], feat_fs, band=[1, 10]) for trl in data]
+data['peak_rate_onset'] = [(trl > 0).astype(float) for trl in data['peak_rate']]
 
 # Step C: Final alignment and "Null" Noise Injection
+np.random.seed(0)
 for i, trial in enumerate(data):    
     # Null Band: Gaussian noise scaled to match envelope variance
     noise = np.random.randn(trial['resp'].shape[0])
@@ -63,15 +65,15 @@ plt.show()
 # 3. Fit Models with Injected Noise (Order Dependency)
 # ----------------------------------------------------
 
-tmin, tmax, sfreq = -0.2, 0.7, 100
-alphas = np.logspace(-2, 8, 6) 
+tmin, tmax, sfreq = -0.2, 0.5, 100
+alphas = np.logspace(-2, 8, 21) 
 
 # We fit two models with the noise band in different positions
-order_1 = ['env', 'noise', 'peak_rate']
+order_1 = ['env', 'noise', 'peak_rate_onset', 'peak_rate']
 model1 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
 model1.fit(data=data[:-1], feature_order=order_1, target='resp')
 
-order_2 = ['peak_rate', 'noise', 'env']
+order_2 = ['peak_rate_onset', 'peak_rate', 'noise', 'env']
 model2 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
 model2.fit(data=data[:-1], feature_order=order_2, target='resp')
 
@@ -79,11 +81,14 @@ model2.fit(data=data[:-1], feature_order=order_2, target='resp')
 # 4. Alpha Optimization Paths (Marginal Delta R)
 # ----------------------------------------------
 
-colors = {'env': '#1f77b4', 'noise': '#7f7f7f', 'peak_rate': '#d62728'}
+colors = {
+'env': '#1f77b4', 'noise': '#7f7f7f',
+'peak_rate': '#d62728', 'peak_rate_onset': '#d62000'
+}
 n_bands = len(order_1)
 
 for b_idx in range(n_bands):
-    fig, axes = plt.subplots(1, 2, figsize=(14, 4), sharey=False)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
     for i, (mdl, ord_list) in enumerate(zip([model1, model2], [order_1, order_2])):
         feat = ord_list[b_idx]
         path = mdl.alpha_paths_[feat]
@@ -111,12 +116,14 @@ for b_idx in range(n_bands):
 # Evaluate both models on a held-out trial for all channels
 test_trl = data[-1:]
 
-r_full_1 = nl.stats.pairwise_correlation(test_trl[0]['resp'], model1.predict(test_trl)[0])
-r_full_2 = nl.stats.pairwise_correlation(test_trl[0]['resp'], model2.predict(test_trl)[0])
+# r_full_1 = nl.stats.pairwise_correlation(test_trl[0]['resp'], model1.predict(test_trl)[0])
+# r_full_2 = nl.stats.pairwise_correlation(test_trl[0]['resp'], model2.predict(test_trl)[0])
+r_full_1 = model1.scores_[:,:,-1].mean(axis=0)
+r_full_2 = model2.scores_[:,:,-1].mean(axis=0)
 
-fig, ax = plt.subplots(figsize=(6, 6))
-ax.scatter(r_full_1, r_full_2, alpha=0.6, edgecolors='w', color='purple')
-lims = [0, max(ax.get_xlim()[1], ax.get_ylim()[1])]
+fig, ax = plt.subplots(figsize=(4, 4))
+ax.scatter(r_full_1, r_full_2, s=50, alpha=0.6, edgecolors='w', color='purple')
+lims = [0.5, max(ax.get_xlim()[1], ax.get_ylim()[1])]
 ax.plot(lims, lims, 'k--', alpha=0.5, label='Unity (Perfect Consistency)')
 ax.set_title('Global Consistency Check')
 ax.set_xlabel('Predictive Accuracy $r$ (Order 1)')
@@ -128,8 +135,8 @@ plt.show()
 # 6. Final Model Kernels for the Best Channel
 # -------------------------------------------
 
-best_ch = np.argmax(r_full_2)
-fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
+best_ch = np.argmax(r_full_1)
+fig, axes = plt.subplots(1, 2, figsize=(8, 4), sharey=True)
 lags = np.linspace(tmin, tmax, model1._ndelays)
 
 for i, (mdl, ord_list, title) in enumerate(zip([model1, model2], 
@@ -140,7 +147,8 @@ for i, (mdl, ord_list, title) in enumerate(zip([model1, model2],
                      label=feat, color=colors[feat], lw=2 if feat != 'noise' else 1,
                      linestyle='-' if feat != 'noise' else '--')
     
-    axes[i].axhline(0, color='black', alpha=0.3)
+    axes[i].axhline(0, color='black', alpha=0.5)
+    axes[i].axvline(0, color='black', alpha=0.5)
     axes[i].set_title(f"{title} - Ch {best_ch}")
     axes[i].set_xlabel('Lag (s)')
     axes[i].legend(fontsize='small')
@@ -152,8 +160,10 @@ plt.show()
 
 # Final Summary Table for the Best Channel
 print(f"\nFinal Statistics for Model 1, Electrode {best_ch}:")
-model1.summary(test_trl, channel=best_ch)
+model1.summary(best_ch)
 
 # Final Summary Table for the Best Channel
 print(f"\nFinal Statistics for Model 2, Electrode {best_ch}:")
-model2.summary(test_trl, channel=best_ch)
+model2.summary(best_ch)
+
+print()

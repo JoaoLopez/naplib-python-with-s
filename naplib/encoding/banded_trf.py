@@ -1,5 +1,4 @@
 import numpy as np
-import copy
 import pandas as pd
 from tqdm.auto import tqdm
 from scipy.stats import ttest_1samp
@@ -41,6 +40,7 @@ class BandedTRF(BaseEstimator):
         self.feature_order_ = []
         self.model_ = None
         self.target_ = None
+        self.scores_ = None # Shape: (n_trials, n_channels, n_features)
 
     @property
     def _ndelays(self):
@@ -50,26 +50,17 @@ class BandedTRF(BaseEstimator):
     def coef_(self):
         """
         Reshaped coefficients of shape (n_targets, n_features, n_delays).
-        Assumes each feature has the same number of delays (tmin to tmax).
-        Note: Only works if feat_dims_ are all 1. For multi-dim features, 
-        this would require more complex indexing.
         """
         if self.model_ is None:
             return None
         
-        # self.model_.coef_ is (n_targets, n_features_total)
         n_targets = self.model_.coef_.shape[0]
         n_feats = len(self.feature_order_)
         
-        # Reshape to (n_targets, n_features, n_delays)
-        # This works because _prepare_matrix concatenates features before delaying
+        # MNE _delay_time_series output is (n_samples, n_feats * n_delays)
         return self.model_.coef_.reshape(n_targets, n_feats, self._ndelays)
-        # return self.model_.coef_.reshape(n_targets, self._ndelays, n_feats).transpose(0, 2, 1)
 
     def _prepare_matrix(self, X_list, feature_names, alphas_dict):
-        """
-        X_list is a list of lists: [feature_1_trials, feature_2_trials, ...]
-        """
         processed_trials = []
         n_trials = len(X_list[0])
         
@@ -78,7 +69,11 @@ class BandedTRF(BaseEstimator):
             for i, name in enumerate(feature_names):
                 x = X_list[i][trl]
                 
-                if np.isscalar(x):
+                # Extract array if trial is wrapped in a single-element list
+                if isinstance(x, list) and len(x) == 1:
+                    x = x[0]
+                
+                if np.isscalar(x) or x is None:
                     continue 
                 if x.ndim == 1:
                     x = x[:, np.newaxis]
@@ -86,7 +81,6 @@ class BandedTRF(BaseEstimator):
                 if name in self.basis_dict:
                     x = self.basis_dict[name].transform(x) 
                 
-                # Apply the band-specific scaling (Banded Ridge trick)
                 alpha = alphas_dict.get(name, 1.0)
                 mats.append(x / np.sqrt(alpha))
             
@@ -102,54 +96,60 @@ class BandedTRF(BaseEstimator):
         self.feature_order_ = feature_order
         self.target_ = target
         
-        # Parse targets and all features into lists of trials
         y = _parse_outstruct_args(data, target)
+        if not isinstance(y, list): y = [y]
+        
+        n_trials = len(y)
         self.n_targets_ = y[0].shape[1]
         
-        # Pre-parse all features once
-        all_features_data = [_parse_outstruct_args(data, f) for f in feature_order]
+        # Standardize all features into a list of trial-lists
+        all_features_data = []
+        for f in feature_order:
+            f_data = _parse_outstruct_args(data, f)
+            all_features_data.append(f_data if isinstance(f_data, list) else [f_data])
+
+        # Cache cross-validated R scores: (trials, channels, features)
+        self.scores_ = np.zeros((n_trials, self.n_targets_, len(feature_order)))
 
         for i, current_feat in enumerate(feature_order):
             best_alpha = None
             max_r = -np.inf
             r_history = []
+            best_r_per_trial_ch = None
             
             for alpha in tqdm(self.alphas, desc=f"Optimizing {current_feat}", leave=False):
                 temp_alphas = {**self.feature_alphas_, current_feat: alpha}
-                # Slice the pre-parsed list of trial-lists
                 X_mats = self._prepare_matrix(all_features_data[:i+1], feature_order[:i+1], temp_alphas)
                 
-                trial_betas = []
-                for trl_x, trl_y in zip(X_mats, y):
-                    mdl = Ridge(alpha=1.0).fit(trl_x, trl_y)
-                    trial_betas.append(mdl.coef_)
+                trial_betas = [Ridge(alpha=1.0).fit(tx, ty).coef_ for tx, ty in zip(X_mats, y)]
 
-                trial_corrs = []
-                for test_idx in range(len(X_mats)):
-                    train_indices = [j for j in range(len(trial_betas)) if j != test_idx]
+                current_alpha_trial_r = np.zeros((n_trials, self.n_targets_))
+                for test_idx in range(n_trials):
+                    train_indices = [j for j in range(n_trials) if j != test_idx]
                     avg_beta = np.mean([trial_betas[j] for j in train_indices], axis=0)
                     y_pred = X_mats[test_idx] @ avg_beta.T
                     
-                    # New pairwise_correlation returns 1D array of correlations per channel
-                    r_per_channel = pairwise_correlation(y[test_idx], y_pred)
-                    trial_corrs.append(np.mean(r_per_channel))
+                    current_alpha_trial_r[test_idx, :] = pairwise_correlation(y[test_idx], y_pred)
                 
-                avg_r = np.mean(trial_corrs)
+                avg_r = np.nanmean(current_alpha_trial_r)
                 r_history.append(avg_r)
-                if avg_r > max_r:
+                if avg_r > max_r or np.isclose(avg_r, max_r):
                     max_r, best_alpha = avg_r, alpha
+                    best_r_per_trial_ch = current_alpha_trial_r
             
             self.feature_alphas_[current_feat] = best_alpha
             self.alpha_paths_[current_feat] = np.array(r_history)
+            self.scores_[:, :, i] = best_r_per_trial_ch
 
-        # Final fit
+        # Final fit on all data
         final_X = self._prepare_matrix(all_features_data, feature_order, self.feature_alphas_)
         self.model_ = Ridge(alpha=1.0).fit(np.concatenate(final_X), np.concatenate(y))
         
-        # Record feature dimensions
+        # Record feature dimensions for partial prediction masking
         self.feat_dims_ = []
         for i, name in enumerate(feature_order):
             x_sample = all_features_data[i][0]
+            if isinstance(x_sample, list): x_sample = x_sample[0]
             if x_sample.ndim == 1: x_sample = x_sample[:, None]
             if name in self.basis_dict:
                 x_sample = self.basis_dict[name].transform(x_sample)
@@ -163,7 +163,12 @@ class BandedTRF(BaseEstimator):
         
         requested_features = feature_names if feature_names else self.feature_order_
         
-        feat_data_list = [_parse_outstruct_args(data, f) for f in requested_features]
+        # Standardize feature data to list of trial-lists
+        feat_data_list = []
+        for f in requested_features:
+            f_data = _parse_outstruct_args(data, f)
+            feat_data_list.append(f_data if isinstance(f_data, list) else [f_data])
+
         X_mats = self._prepare_matrix(feat_data_list, requested_features, self.feature_alphas_)
         
         if feature_names is not None:
@@ -184,55 +189,47 @@ class BandedTRF(BaseEstimator):
         
         return [self.model_.predict(x) for x in X_mats]
 
-    def summary(self, data, channel=None):
+    def summary(self, channel=None):
         r"""
-        Generate a statistical summary of the fitted BandedTRF model.
+        Generate a statistical summary using scores captured during fit.
         """
-        if not hasattr(self, 'feature_alphas_'):
+        if self.scores_ is None:
             raise ValueError("Model must be fitted before calling summary.")
 
-        resp_list = _parse_outstruct_args(data, self.target_) 
-        
-        n_trials = len(resp_list)
-        n_channels = resp_list[0].shape[1]
-        n_features = len(self.feature_order_)
-        r_tensor = np.zeros((n_trials, n_channels, n_features))
-        
-        current_features = []
-        for f_idx, feat in enumerate(self.feature_order_):
-            current_features.append(feat)
-            preds = self.predict(data, feature_names=current_features)
-            for t_idx in range(n_trials):
-                # Using new pairwise_correlation which returns per-channel values
-                r_tensor[t_idx, :, f_idx] = pairwise_correlation(resp_list[t_idx], preds[t_idx])
-
-        dr_tensor = np.diff(r_tensor, axis=2, prepend=0)
+        # Calculate Delta R (improvement at each band addition)
+        dr_tensor = np.diff(self.scores_, axis=2, prepend=0)
 
         if channel is not None:
-            r_report, dr_report = r_tensor[:, channel, :], dr_tensor[:, channel, :]
+            r_report = self.scores_[:, channel, :]
+            dr_report = dr_tensor[:, channel, :]
             ch_label = f"Channel {channel}"
         else:
-            r_report, dr_report = np.mean(r_tensor, axis=1), np.mean(dr_tensor, axis=1)
+            r_report = np.nanmean(self.scores_, axis=1)
+            dr_report = np.nanmean(dr_tensor, axis=1)
             ch_label = "Global Mean (All Channels)"
 
         summary_results = []
         for f_idx, feat in enumerate(self.feature_order_):
-            # t-test across trials
-            if channel is not None:
-                sample = dr_report[:, f_idx]
+            sample = dr_report[:, f_idx]
+            
+            # Robust t-test: handle NaNs and zero variance
+            clean_sample = sample[~np.isnan(sample)]
+            if len(clean_sample) < 2 or np.all(clean_sample == clean_sample[0]):
+                p_val = 1.0 if np.mean(clean_sample) <= 0 else 0.0
             else:
-                sample = np.mean(dr_tensor[:, :, f_idx], axis=1)
-                
-            _, p_val = ttest_1samp(sample, 0, alternative='greater')
+                _, p_val = ttest_1samp(clean_sample, 0, alternative='greater')
+            
             summary_results.append({
                 'Feature': feat,
-                'Total R': np.mean(r_report[:, f_idx]),
-                'Delta R': np.mean(dr_report[:, f_idx]),
+                'Total R': np.nanmean(r_report[:, f_idx]),
+                'Delta R': np.nanmean(dr_report[:, f_idx]),
                 'Alpha': self.feature_alphas_[feat],
                 'p-value': p_val,
             })
 
         df = pd.DataFrame(summary_results).set_index('Feature')
         print(f"\nBandedTRF Summary | {ch_label}\n" + "-" * 70)
-        print(df.to_string(formatters={'Total R': '{:,.4f}'.format, 'Delta R': '{:,.4f}'.format, 'Alpha': '{:,.2e}'.format}))
+        print(df.to_string(formatters={'Total R': '{:,.4f}'.format, 
+                                      'Delta R': '{:,.4f}'.format, 
+                                      'Alpha': '{:,.2e}'.format}))
         return df
