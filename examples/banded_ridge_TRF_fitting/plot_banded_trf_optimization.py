@@ -70,11 +70,11 @@ alphas = np.logspace(-2, 8, 21)
 # We fit two models with the noise band in different positions
 order_1 = ['env', 'noise', 'peak_rate']
 model1 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
-model1.fit(data=data[:-1], feature_order=order_1, target='resp')
+model1.fit(data=data, feature_order=order_1, target='resp')
 
 order_2 = ['peak_rate', 'noise', 'env']
 model2 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
-model2.fit(data=data[:-1], feature_order=order_2, target='resp')
+model2.fit(data=data, feature_order=order_2, target='resp')
 
 ###############################################################################
 # 4. Alpha Optimization Paths (Marginal Delta R)
@@ -110,9 +110,6 @@ for b_idx in range(n_bands):
 ###############################################################################
 # 5. Global Consistency: Order 1 vs Order 2
 # -----------------------------------------
-
-# Evaluate both models on a held-out trial for all channels
-test_trl = data[-1:]
 
 # r_full_1 = nl.stats.pairwise_correlation(test_trl[0]['resp'], model1.predict(test_trl)[0])
 # r_full_2 = nl.stats.pairwise_correlation(test_trl[0]['resp'], model2.predict(test_trl)[0])

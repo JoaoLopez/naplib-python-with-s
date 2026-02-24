@@ -1,3 +1,27 @@
+"""
+=========================================================
+TRF Comparison: Iterative RidgeCV vs. Banded Regularization
+=========================================================
+
+This example compares two approaches for encoding models with multiple 
+stimulus features:
+1. **Iterative Standard TRF**: Adds features sequentially, optimizing a 
+   single global regularization parameter (alpha) via 5-fold cross-validation 
+   using ``sklearn.linear_model.RidgeCV``.
+2. **Banded TRF**: Adds features sequentially, but optimizes a unique 
+   alpha for each feature band.
+
+The comparison focuses on three key metrics:
+- **Total Correlation**: Final predictive accuracy with all features.
+- **Delta R**: The marginal improvement in correlation as each feature is 
+  added to the model.
+- **Noise Robustness**: The ability of the model to ignore a "Null" noise band 
+  injected between meaningful features.
+
+The script uses synthetic neural responses driven by a speech envelope and 
+onset peak rate, with Gaussian noise injected as a distractor.
+"""
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -5,91 +29,136 @@ from scipy.signal import resample
 from scipy.stats import zscore
 import naplib as nl
 from naplib.encoding import TRF, BandedTRF
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import RidgeCV
 
 ###############################################################################
-# 1. Prepare Synthetic Data with Known Ground Truth
+# 1. Prepare Synthetic Data (Keeping your extraction logic)
 ###############################################################################
-# Load real speech data as a template for stimulus statistics
 data = nl.io.load_speech_task_data()
 feat_fs = 100
 
-# Compute Features
 data['aud_spec'] = [resample(nl.features.auditory_spectrogram(trl['sound'], 11025), trl['resp'].shape[0], axis=0) for trl in data]
-
 data['env'] = [zscore(np.sum(trl['aud_spec'], axis=1)) for trl in data]
-
-# Compute Peak Rate (Sparse events)
 data['peak_rate'] = [nl.features.peak_rate(trl['aud_spec'], feat_fs) for trl in data]
 
-# Inject Noise Band (Matches envelope variance but is unrelated to brain)
 np.random.seed(42)
 for i in range(len(data)):
     noise = np.random.randn(data[i]['resp'].shape[0])
     data[i]['noise'] = (noise / np.std(noise)) * np.std(data[i]['env'])
 
-###############################################################################
-# 2. Fit Standard TRF (Global Alpha)
-###############################################################################
 tmin, tmax, sfreq = -0.1, 0.5, 100
 feature_list = ['env', 'noise', 'peak_rate']
-
-# Standard TRF uses one alpha for all concatenated features
-standard_model = TRF(tmin, tmax, sfreq, estimator=Ridge(alpha=1000))
-standard_model.fit(data=data[:-1], X=feature_list, y='resp')
-standard_scores = standard_model.score(data=data[-1:], X=feature_list, y='resp')
+alphas = np.logspace(0, 7, 8)
 
 ###############################################################################
-# 3. Fit Banded TRF (Feature-Specific Alphas)
+# 2. Fit Standard TRF (Iterative RidgeCV for direct comparison)
 ###############################################################################
-# Banded TRF optimizes alpha per band sequentially
-banded_model = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=np.logspace(0, 7, 8))
-banded_model.fit(data=data[:-1], feature_order=feature_list, target='resp')
+print("Fitting Iterative Standard TRF (RidgeCV)...")
+standard_total_r = []
+standard_delta_r = []
+prev_r = 0
+
+for i in range(len(feature_list)):
+    current_feats = feature_list[:i+1]
+    all_X = []
+    for trl in data:
+        curr_X = []
+        for ft in current_feats:
+            if trl[ft].ndim==1:
+                curr_X.append(trl[ft][:,np.newaxis])
+            else:
+                curr_X.append(trl[ft])
+        all_X.append(curr_X)
+    all_X = [np.concatenate(x, axis=1) for x in all_X]
+
+    # RidgeCV performs leave-one-trial-out (or k-fold) internally
+    # We use cv=5 as requested to find the best global alpha for the current feature set
+    est = RidgeCV(alphas=alphas, cv=5)
+    model = TRF(tmin, tmax, sfreq, estimator=est)
+    model.fit(X=all_X, y=data['resp'])
+    
+    # Score on held-out trial
+    curr_r = np.mean(model.score(X=all_X, y=data['resp']))
+    
+    standard_total_r.append(curr_r)
+    standard_delta_r.append(curr_r - prev_r)
+    prev_r = curr_r
 
 ###############################################################################
-# 4. Compare Results
+# 3. Fit Banded TRF (Sequential Band Optimization)
 ###############################################################################
-# Generate Banded Summary (Delta R analysis)
-print("\n--- Banded TRF Statistical Summary ---")
+print("Fitting Banded TRF...")
+banded_model = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
+banded_model.fit(data=data, feature_order=feature_list, target='resp')
+
+# For summary metrics on the test set specifically:
 df_summary = banded_model.summary()
 
-# Plotting the three requested comparisons
-fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+###############################################################################
+# 4. Comprehensive Comparison Plots
+###############################################################################
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-# a) Total Correlation Comparison
-axes[0].bar(['Standard TRF', 'Banded TRF'], 
-            [np.mean(standard_scores), df_summary['Total R'].iloc[-1]], 
-            color=['#7f7f7f', '#1f77b4'])
-axes[0].set_title('a) Total Predictive Accuracy (R)\n(Standard vs. Final Banded)')
-axes[0].set_ylabel('Pearson Correlation')
+# Comparison A: Cumulative R
+banded_cumulative_r = [banded_model.scores_[:,:,:i+1].mean() for i in range(len(feature_list))]
+axes[0].plot(feature_list, standard_total_r, 'o--', label='Standard (RidgeCV)', color='#7f7f7f', markersize=8)
+axes[0].plot(feature_list, banded_cumulative_r, 'D-', label='Banded TRF', color='#1f77b4', markersize=8)
+axes[0].set_title(r'Cumulative Predictive Accuracy ($R$)', fontweight='bold')
+axes[0].set_ylabel('Mean Pearson Correlation')
+axes[0].legend()
+axes[0].grid(axis='y', alpha=0.3)
 
-# b) Delta R when adding Peak Rate
-# This shows the unique contribution of peaks above the envelope
-axes[1].bar(df_summary.index[:2], df_summary['Delta R'].iloc[:2], color=['#1f77b4', '#d62728'])
-axes[1].set_title('b) Unique Contribution (Delta R)\n(Env vs. Peak Rate)')
-axes[1].set_ylabel('Improvement in R')
-
-# c) Non-zero Delta R when adding Noise
-# This highlights the model's robustness to irrelevant bands
-axes[2].bar(df_summary.index, df_summary['Delta R'], color=['#1f77b4', '#d62728', '#bcbd22'])
-axes[2].axhline(0, color='k', linestyle='--', alpha=0.3)
-axes[2].set_title('c) Robustness Check\n(Delta R for Noise Band)')
-axes[2].set_ylabel('Improvement in R')
+# Comparison B: Delta R (Unique Variance)
+x = np.arange(len(feature_list))
+width = 0.35
+axes[1].bar(x - width/2, standard_delta_r, width, label=r'Standard Delta $R$', color='#aaaaaa')
+axes[1].bar(x + width/2, df_summary['Delta R'], width, label=r'Banded Delta $R$', color='#d62728')
+axes[1].set_xticks(x)
+axes[1].set_xticklabels(feature_list)
+axes[1].set_title('Marginal Improvement (Delta $R$)', fontweight='bold')
+axes[1].set_ylabel(r'$\Delta R$ Improvement')
+axes[1].legend()
 
 plt.tight_layout()
 plt.show()
 
-# Visualize Kernels for Banded Model
+###############################################################################
+# 5. Kernel Comparison: Standard vs. Banded
+###############################################################################
 best_ch = 0
 lags = np.linspace(tmin, tmax, banded_model._ndelays)
-plt.figure(figsize=(10, 4))
-for f_idx, feat in enumerate(feature_list):
-    # coef_ is (targets, features, delays, trials) -> average over trials
-    kernel = banded_model.coef_[best_ch, f_idx, :, :].mean(axis=-1)
-    plt.plot(lags, kernel, label=feat, lw=2 if feat != 'noise' else 1)
+fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
 
-plt.axhline(0, color='k', alpha=0.5)
-plt.title(f'Banded TRF Kernels (Ch {best_ch}) - Noise is effectively Zeroed')
-plt.xlabel('Lag (s)')
-plt.legend()
+# Plot Standard TRF Kernels (from the final model containing all features)
+# Standard TRF.coef_ is usually (n_targets, n_features_total, n_delays)
+# Note: we must slice the n_features_total to match our bands
+std_coef = model.coef_[best_ch] 
+
+# Plot Banded TRF Kernels
+# BandedTRF.coef_ is (n_targets, n_bands, n_delays, n_trials)
+banded_coef = banded_model.coef_[best_ch].mean(axis=-1)
+
+colors = ['#1f77b4', '#7f7f7f', '#d62728'] # Env (Blue), Noise (Gray), Peak (Red)
+
+for i, feat in enumerate(feature_list):
+    # Standard Model Plot
+    # Standard TRF has all features concatenated; we need to extract indices
+    # This logic assumes simple features; if using basis functions, indices change.
+    axes[0].plot(lags, std_coef[i, :], label=f'Std: {feat}', color=colors[i], alpha=0.8)
+    
+    # Banded Model Plot
+    axes[1].plot(lags, banded_coef[i, :], label=f'Banded: {feat}', color=colors[i], lw=2)
+
+
+
+axes[0].set_title(f'Standard TRF Kernels (Global $\\alpha$)\nChannel {best_ch}')
+axes[1].set_title(f'Banded TRF Kernels (Independent $\\alpha$)\nChannel {best_ch}')
+
+for ax in axes:
+    ax.axhline(0, color='black', lw=1, alpha=0.5)
+    ax.set_xlabel('Lag (s)')
+    ax.legend(fontsize='small', frameon=False)
+
+axes[0].set_ylabel('Weights (a.u.)')
+plt.tight_layout()
 plt.show()
