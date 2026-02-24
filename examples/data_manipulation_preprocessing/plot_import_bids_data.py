@@ -38,7 +38,7 @@ from naplib.preprocessing import normalize
 # ----------------
 
 dataset = 'ds002778'
-# subject = 'pd06'
+subject = 'pd6'
 
 bids_root = path.join(path.dirname(sample.data_path()), dataset)
 print(bids_root)
