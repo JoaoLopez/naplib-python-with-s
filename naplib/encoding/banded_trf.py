@@ -193,9 +193,10 @@ class BandedTRF(BaseEstimator):
                 f"as used in fit. Found {n_trials} trials."
             )
 
-        # Pre-extract all weights and intercepts for efficient averaging
-        all_coefs = np.array([m.coef_ for m in self.model_]) # (n_trials, n_targets, n_features_total)
-        all_intercepts = np.array([m.intercept_ for m in self.model_]) # (n_trials, n_targets)
+        all_coefs = np.array([m.coef_ for m in self.model_])
+        if all_coefs.ndim == 2:
+            # Expand (trials, features) -> (trials, 1_target, features)
+            all_coefs = all_coefs[:, np.newaxis, :]
 
         # Handle feature masking if a subset is requested
         mask = np.ones(all_coefs.shape[2], dtype=bool)
@@ -215,13 +216,12 @@ class BandedTRF(BaseEstimator):
             
             # Average coefficients and intercepts from the other trials
             loto_coef = np.mean(all_coefs[loto_indices], axis=0)
-            loto_intercept = np.mean(all_intercepts[loto_indices], axis=0)
             
             # Apply feature mask
             sliced_coef = loto_coef[:, mask]
             
             # Predict for the current trial
-            preds.append(X_mats[i] @ sliced_coef.T + loto_intercept)
+            preds.append(X_mats[i] @ sliced_coef.T)
             
         return preds
 
