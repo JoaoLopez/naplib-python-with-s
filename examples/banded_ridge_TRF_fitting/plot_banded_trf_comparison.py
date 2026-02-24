@@ -1,7 +1,7 @@
 """
-=========================================================
+===========================================================
 TRF Comparison: Iterative RidgeCV vs. Banded Regularization
-=========================================================
+===========================================================
 
 This example compares two approaches for encoding models with multiple 
 stimulus features:
