@@ -30,6 +30,8 @@ from naplib.encoding import BandedTRF
 # speech envelope, peak rate, and a "Null" noise band for validation.
 
 data = nl.io.load_speech_task_data()
+n_trials = 3
+data = data[:n_trials]
 
 # Standardize neural responses
 data['resp'] = nl.preprocessing.normalize(data=data, field='resp')
@@ -75,7 +77,7 @@ plt.show()
 # feature entry affects the final predictive performance.
 
 tmin, tmax, sfreq = -0.2, 0.5, 100
-alphas = np.logspace(-2, 8, 21) 
+alphas = np.logspace(-2, 8, 11) 
 
 # Fit Model 1: Envelope -> Noise -> Peak Rate
 order_1 = ['env', 'noise', 'peak_rate']

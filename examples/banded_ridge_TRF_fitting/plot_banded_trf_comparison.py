@@ -5,6 +5,7 @@ TRF Comparison: Iterative RidgeCV vs. Banded Regularization
 
 This example compares two approaches for encoding models with multiple 
 stimulus features:
+
 1. **Iterative Standard TRF**: Adds features sequentially, optimizing a 
    single global regularization parameter (alpha) via 5-fold cross-validation 
    using ``sklearn.linear_model.RidgeCV``.
@@ -12,6 +13,7 @@ stimulus features:
    alpha for each feature band.
 
 The comparison focuses on three key metrics:
+
 - **Total Correlation**: Final predictive accuracy with all features.
 - **Delta R**: The marginal improvement in correlation as each feature is 
   added to the model.
@@ -146,7 +148,7 @@ axes[1].bar(x - width/2, standard_delta_r, width, label=r'Standard $\Delta R$', 
 axes[1].bar(x + width/2, df_summary['Delta R'], width, label=r'Banded $\Delta R$', color='#d62728')
 axes[1].set_xticks(x)
 axes[1].set_xticklabels(feature_list)
-axes[1].set_title('Marginal Improvement ($\Delta R$)', fontweight='bold')
+axes[1].set_title(r'Marginal Improvement ($\Delta R$)', fontweight='bold')
 axes[1].set_ylabel(r'Improvement in $R$')
 axes[1].set_yscale('symlog', linthresh=1e-4) # Symlog to visualize small noise contributions
 axes[1].legend()
@@ -164,6 +166,7 @@ fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
 
 # Plot Standard Alpha Path
 for path in standard_alpha_paths:
+    best_idx = np.argmax(path)
     axes[0].semilogx(alphas, path, 'o-', color='black', alpha=0.3)
     axes[0].plot(alphas[best_idx], path[best_idx], '*',
         markersize=14, markeredgecolor='k')
