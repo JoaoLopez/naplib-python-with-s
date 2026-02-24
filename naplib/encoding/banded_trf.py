@@ -123,7 +123,7 @@ class BandedTRF(BaseEstimator):
                 temp_alphas = {**self.feature_alphas_, current_feat: alpha}
                 X_mats = self._prepare_matrix(all_features_data[:i+1], feature_order[:i+1], temp_alphas)
                 
-                trial_betas = [Ridge(alpha=1.0).fit(tx, ty).coef_ for tx, ty in zip(X_mats, y)]
+                trial_betas = [Ridge(alpha=1.0).fit(tx, ty.reshape(-1, self.n_targets_)).coef_ for tx, ty in zip(X_mats, y)]
 
                 current_alpha_trial_r = np.zeros((n_trials, self.n_targets_))
                 for test_idx in range(n_trials):
