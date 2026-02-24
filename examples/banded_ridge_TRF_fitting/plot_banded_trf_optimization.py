@@ -99,7 +99,7 @@ colors = {'env': '#1f77b4', 'noise': '#7f7f7f', 'peak_rate': '#d62728'}
 n_bands = len(order_1)
 
 for b_idx in range(n_bands):
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
     for i, (mdl, ord_list) in enumerate(zip([model1, model2], [order_1, order_2])):
         feat = ord_list[b_idx]
         path = mdl.alpha_paths_[feat]

@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.signal import resample
-from scipy.stats import zscore
+from scipy.stats import zscore, ttest_1samp
 import naplib as nl
 from naplib.encoding import TRF, BandedTRF
 from sklearn.linear_model import Ridge
@@ -63,6 +63,7 @@ standard_total_r = []
 standard_delta_r = []
 standard_alpha_paths = [] 
 prev_r = 0
+prev_r_all = 0
 
 for i in range(len(feature_list)):
     current_feats = feature_list[:i+1]
@@ -88,19 +89,22 @@ for i in range(len(feature_list)):
             r = nl.stats.pairwise_correlation(y[t_idx], y_hat)
             loto_trial_rs.append(np.mean(r))
 
-        avg_alpha_r = loto_trial_rs
-        path_for_this_set.append(np.mean(avg_alpha_r))
+        alpha_r = np.array(loto_trial_rs)
+        avg_alpha_r = np.mean(loto_trial_rs)
+        path_for_this_set.append(avg_alpha_r)
         
         if avg_alpha_r > best_alpha_r:
-            best_alpha_r = np.mean(avg_alpha_r)
-            final_best_model = avg_coef 
-            _, p_val = stats.ttest_1samp(avg_alpha_r, 0, alternative='greater')
+            best_alpha_r = avg_alpha_r
+            best_alpha_r_all = alpha_r
+            final_best_model = np.stack(trial_betas, axis=2) 
+            _, p_val = ttest_1samp(alpha_r-prev_r_all, 0)
             
     standard_alpha_paths.append(path_for_this_set)
     standard_total_r.append(best_alpha_r)
     standard_delta_r.append(best_alpha_r - prev_r)
     standard_p.append(p_val)
     prev_r = best_alpha_r
+    prev_r_all = best_alpha_r_all
 
 ###############################################################################
 # 3. Fit Banded TRF
@@ -160,35 +164,60 @@ plt.tight_layout()
 plt.show()
 
 ###############################################################################
-# 4b. Visualization: Alpha Paths
-# ------------------------------
-# Contrast the global alpha sweep of standard Ridge with the per-feature 
-# optimization paths of Banded Ridge.
+# 4b. Visualization: Alpha Optimization Paths (Standard vs. Banded)
+# -----------------------------------------------------------------
+# We compare the optimization curves for each feature. For the Standard model,
+# the path represents the best $R$ achievable using a global $\alpha$ as 
+# features are added. For the Banded model, the path represents the marginal
+# improvement ($\Delta R$) gained by optimizing that specific band's alpha.
 
-fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
+colors = {'env': '#1f77b4', 'noise': '#7f7f7f', 'peak_rate': '#d62728'}
 
-# Plot Standard Alpha Path
-for path in standard_alpha_paths:
-    best_idx = np.argmax(path)
-    axes[0].semilogx(alphas, path, 'o-', color='black', alpha=0.3)
-    axes[0].plot(alphas[best_idx], path[best_idx], '*', markersize=14, markeredgecolor='k')
-axes[0].set_title('Standard TRF: Global Alpha Sweep\n(Full Feature Set)')
-axes[0].set_xlabel(r'Regularization ($\alpha$)')
-axes[0].set_ylabel('Mean Correlation ($r$)')
+for b_idx, feat in enumerate(feature_list):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 4), sharey=True)
+    
+    # --- Left Plot: Standard TRF (Global Alpha) ---
+    # In the standard approach, we look at the R-path for the cumulative set
+    std_path = np.array(standard_alpha_paths[b_idx])
+    # Calculate marginal improvement for standard model
+    prev_std_r = 0 if b_idx == 0 else standard_total_r[b_idx-1]
+    std_delta_path = std_path - prev_std_r
+    
+    best_std_idx = np.argmax(std_delta_path)
+    axes[0].semilogx(alphas, std_delta_path, 'o-', color='black', alpha=0.6, label=f'Global $\\alpha$ Path')
+    axes[0].plot(alphas[best_std_idx], std_delta_path[best_std_idx], '*', 
+                 markersize=14, markeredgecolor='k', label=f'Opt $\\alpha$: {alphas[best_std_idx]:.1e}')
+    
+    axes[0].set_title(f'Standard TRF - Step {b_idx+1}: {feat}')
+    axes[0].set_xlabel(r'Global Regularization ($\alpha$)')
+    axes[0].set_ylabel(r'Marginal Improvement ($\Delta R$)')
+    axes[0].legend(fontsize='small')
+    
+    # --- Right Plot: Banded TRF (Independent Alpha) ---
+    # In the banded approach, we look at the R-path for the specific feature band
+    banded_path = banded_model.alpha_paths_[feat]
+    # Calculate marginal improvement relative to previous bands' max R
+    prev_banded_r = 0 if b_idx == 0 else np.max(banded_model.alpha_paths_[feature_list[b_idx-1]])
+    banded_delta_path = banded_path - prev_banded_r
+    
+    best_banded_alpha = banded_model.feature_alphas_[feat]
+    peak_banded_delta = np.max(banded_delta_path)
+    
+    axes[1].semilogx(alphas, banded_delta_path, 'o-', color=colors[feat], label=f'Band: {feat}')
+    axes[1].plot(best_banded_alpha, peak_banded_delta, '*', 
+                 markersize=14, markeredgecolor='k', label=f'Opt $\\alpha$: {best_banded_alpha:.1e}')
+    
+    axes[1].set_title(f'Banded TRF - Step {b_idx+1}: {feat}')
+    axes[1].set_xlabel(r'Band-Specific Regularization ($\alpha$)')
+    axes[1].legend(fontsize='small')
 
-# Plot Banded Alpha Paths
-for i, feat in enumerate(feature_list):
-    path = banded_model.alpha_paths_[feat]
-    best_idx = np.argmax(path)
-    axes[1].semilogx(alphas, path, 'o-', label=f'Band: {feat}')
-    axes[1].plot(alphas[best_idx], path[best_idx], '*', markersize=14, markeredgecolor='k')
+    all_deltas = np.concatenate([std_delta_path, banded_delta_path])
+    ymax = all_deltas.max()
+    ymin = max(all_deltas.min(), -0.005)
+    axes[0].set_ylim([ymin, ymax+(ymax-ymin)*0.1])
 
-axes[1].set_title('Banded TRF: Sequential Alpha Sweeps\n(Per-Feature Regularization)')
-axes[1].set_xlabel(r'Regularization ($\alpha$)')
-axes[1].legend()
-
-plt.tight_layout()
-plt.show()
+    plt.tight_layout()
+    plt.show()
 
 ###############################################################################
 # 5. Kernel Comparison: Standard vs. Banded
@@ -201,16 +230,27 @@ lags = np.linspace(tmin, tmax, banded_model._ndelays)
 fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
 
 # Extract Standard TRF Kernels
-std_coef = final_best_model[best_ch, :].reshape(len(feature_list), len(lags))
+std_coef = final_best_model[best_ch, :, :].reshape(len(feature_list), len(lags), n_trials)
 
 # Extract Banded TRF Kernels (average across trials)
-banded_coef = banded_model.coef_[best_ch].mean(axis=-1)
+banded_coef = banded_model.coef_[best_ch]
 
 colors = ['#1f77b4', '#7f7f7f', '#d62728'] 
 
 for i, feat in enumerate(feature_list):
-    axes[0].plot(lags, std_coef[i, :], label=f'Std: {feat}', color=colors[i], alpha=0.8)
-    axes[1].plot(lags, banded_coef[i, :], label=f'Banded: {feat}', color=colors[i], lw=2)
+    # Plot TRF with error shading across trials/CV folds
+    nl.visualization.shaded_error_plot(
+        lags, std_coef[i, :],
+        color=colors[i],
+        ax=axes[0],
+        plt_args={'label': f'Std: {feat}', 'lw': 2}
+    )
+    nl.visualization.shaded_error_plot(
+        lags, banded_coef[i, :],
+        color=colors[i],
+        ax=axes[1],
+        plt_args={'label': f'Banded: {feat}', 'lw': 2}
+    )
 
 axes[0].set_title(f'Standard TRF Kernels (Global $\\alpha$)\nChannel {best_ch}')
 axes[1].set_title(f'Banded TRF Kernels (Independent $\\alpha$)\nChannel {best_ch}')
