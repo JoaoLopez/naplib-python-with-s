@@ -38,7 +38,7 @@ from naplib.preprocessing import normalize
 # ----------------
 
 dataset = 'ds002778'
-subject = 'pd6'
+# subject = 'pd06'
 
 bids_root = path.join(path.dirname(sample.data_path()), dataset)
 print(bids_root)
@@ -47,7 +47,8 @@ if not path.isdir(bids_root):
 
 
 openneuro.download(dataset=dataset, target_dir=bids_root,
-                   include=[f'sub-{subject}/'])
+                   # include=[f'sub-{subject}/']
+                   )
 
 ###############################################################################
 # Look at the format of the BIDS file structure
