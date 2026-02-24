@@ -1,25 +1,25 @@
 import pytest
 import numpy as np
-from scipy.signal import convolve
 from sklearn.linear_model import Ridge
 
 from naplib import Data
 from naplib.encoding import BandedTRF
-from naplib.encoding.banded_trf import pairwise_correlation
+from naplib.stats import pairwise_correlation
 
 @pytest.fixture(scope='module')
 def synth_data():
     """
-    Generate 3 trials of synthetic data.
-    'stim1' drives response at lag 0.
-    'stim2' drives response at lag 2.
+    Generate synthetic data for testing.
+    'stim1' drives response at lag 0 (weight 1.0).
+    'stim2' drives response at lag 2 (weight 0.5).
     """
     rng = np.random.default_rng(42)
     fs = 100
-    n_samples = 5000
+    n_samples = 1000
+    n_trials = 3
     trials = []
     
-    for _ in range(3):
+    for _ in range(n_trials):
         x1 = rng.standard_normal(size=(n_samples, 1))
         x2 = rng.standard_normal(size=(n_samples, 1))
         
@@ -29,7 +29,7 @@ def synth_data():
         y2 = np.zeros_like(x2)
         y2[2:] = x2[:-2] * 0.5
         
-        resp = y1 + y2 + 0.1 * rng.standard_normal(y1.shape)
+        resp = y1 + y2 + 0.05 * rng.standard_normal(y1.shape)
         trials.append({'resp': resp, 'stim1': x1, 'stim2': x2})
         
     return {
@@ -40,26 +40,11 @@ def synth_data():
         'sfreq': fs
     }
 
-def test_pairwise_correlation_1d():
-    a = np.array([1, 2, 3, 4, 5])
-    b = np.array([1, 2, 3, 4, 5])
-    assert np.isclose(pairwise_correlation(a, b), 1.0)
-    
-    # Anti-correlated
-    assert np.isclose(pairwise_correlation(a, -a), -1.0)
+# --- Core Functionality Tests ---
 
-def test_pairwise_correlation_2d():
-    rng = np.random.default_rng(1)
-    a = rng.standard_normal((100, 2))
-    b = rng.standard_normal((100, 2))
-    r_mat = pairwise_correlation(a, b)
-    assert r_mat.shape == (2, 2)
-    # Diagonals should be reasonable
-    assert np.all(np.abs(np.diag(r_mat)) <= 1.0)
-
-def test_banded_trf_fast_cv_logic(synth_data):
-    """Verify that fit runs and populates alpha paths using the fast CV logic."""
-    alphas = [1e-1, 1e2]
+def test_banded_trf_loto_consistency(synth_data):
+    """Verify LOTO logic: alpha selection and coefficient averaging."""
+    alphas = [1e-1, 1e5] # Distinct alphas to check optimization
     model = BandedTRF(tmin=synth_data['tmin'], 
                       tmax=synth_data['tmax'], 
                       sfreq=synth_data['sfreq'],
@@ -69,17 +54,19 @@ def test_banded_trf_fast_cv_logic(synth_data):
               feature_order=synth_data['feature_order'], 
               target='resp')
     
-    # Check that alpha paths were stored for each feature
-    assert 'stim1' in model.alpha_paths_
-    assert 'stim2' in model.alpha_paths_
-    assert len(model.alpha_paths_['stim1']) == len(alphas)
+    # 1. Check alpha paths exist (should be list of arrays)
+    assert len(model.optimization_paths_) == 2
+    assert len(model.optimization_paths_[0]) == len(alphas)
     
-    # Ensure selected alphas are from the provided list
-    assert model.feature_alphas_['stim1'] in alphas
-    assert model.feature_alphas_['stim2'] in alphas
+    # 2. Verify selected alphas (stim1 should prefer low alpha, noise would prefer high)
+    assert model.feature_alphas_['stim1'] == 1e-1
+    
+    # 3. Check coef_ shape: (targets, features, delays, trials)
+    # n_targets=1, n_features=2, n_delays=4, n_trials=3
+    assert model.coef_.shape == (1, 2, 4, 3)
 
-def test_coef_reshaping(synth_data):
-    """Check that coef_ has the expected dimensions (targets, features, lags)."""
+def test_summary_delta_r(synth_data):
+    """Check if the summary table correctly computes incremental Delta R."""
     model = BandedTRF(tmin=synth_data['tmin'], 
                       tmax=synth_data['tmax'], 
                       sfreq=synth_data['sfreq'])
@@ -88,40 +75,64 @@ def test_coef_reshaping(synth_data):
               feature_order=synth_data['feature_order'], 
               target='resp')
     
-    # n_targets=1, n_features=2 (stim1, stim2), n_lags=4 (0, 0.01, 0.02, 0.03)
-    assert model.coef_.shape == (1, 2, 4)
+    df = model.summary()
+    assert 'Delta R' in df.columns
+    assert 'Total R' in df.columns
+    # stim1 is the primary driver, so Delta R should be positive
+    assert df.loc['stim1', 'Delta R'] > 0
+    # Total R should be non-decreasing
+    assert df.loc['stim2', 'Total R'] >= df.loc['stim1', 'Total R']
 
-def test_predict_subset_features(synth_data):
-    """Verify that predicting with a subset of features works correctly."""
+def test_predict_manual_weight_averaging(synth_data):
+    """Ensure prediction uses the average coefficient across trials."""
     model = BandedTRF(tmin=synth_data['tmin'], 
                       tmax=synth_data['tmax'], 
                       sfreq=synth_data['sfreq'])
-    
     model.fit(data=synth_data['data'], 
               feature_order=synth_data['feature_order'], 
               target='resp')
     
-    # Predict with only the first feature
-    preds = model.predict(data=synth_data['data'], feature_names=['stim1'])
+    preds = model.predict(synth_data['data'])
     
-    assert len(preds) == 3
+    # Output should be a list of arrays (one per trial)
+    assert isinstance(preds, list)
     assert preds[0].shape == synth_data['data'][0]['resp'].shape
-
-def test_fast_cv_vs_standard_ridge(synth_data):
-    """
-    Check if the fast coefficient-averaging approach yields 
-    sensible weights compared to a standard fit.
-    """
-    # Use a single alpha to make comparison straightforward
-    model = BandedTRF(tmin=0, tmax=0, sfreq=100, alphas=[1.0])
-    model.fit(data=synth_data['data'], feature_order=['stim1'], target='resp')
     
-    # For stim 1 at lag 0, weight should be near 1.0
-    # coef_ shape is (1, 1, 1) -> (target, feature, lag)
-    weight = model.coef_[0, 0, 0]
-    assert 0.8 < weight < 1.2
+    # Correlation of predictions should be high for synthetic ground truth
+    r = pairwise_correlation(synth_data['data'][0]['resp'], preds[0])
+    assert np.diag(r)[0] > 0.8
+
+# --- Edge Case & Error Tests ---
+
+def test_single_trial_error(synth_data):
+    """LOTO requires at least 2 trials."""
+    single_trial_data = synth_data['data'][:1]
+    model = BandedTRF(0, 0.1, 100)
+    with pytest.raises(ValueError, match="at least 2 trials"):
+        model.fit(data=single_trial_data, feature_order=['stim1'], target='resp')
+
+def test_feature_not_in_data(synth_data):
+    """Raise error if feature_order contains missing keys."""
+    model = BandedTRF(0, 0.1, 100)
+    with pytest.raises(KeyError):
+        model.fit(data=synth_data['data'], feature_order=['nonexistent'], target='resp')
 
 def test_not_fitted_error():
+    """Ensure access to model properties before fitting raises error."""
     model = BandedTRF(0, 0.1, 100)
-    with pytest.raises(ValueError, match="fitted before accessing coef_"):
+    with pytest.raises(AttributeError, match="not been fitted"):
         _ = model.coef_
+
+# --- Utility Function Tests ---
+
+def test_pairwise_correlation_logic():
+    """Verify basic Pearson R computation."""
+    a = np.array([[1, 2, 3]]).T
+    b = np.array([[1, 2, 3]]).T
+    r = pairwise_correlation(a, b)
+    assert np.isclose(r[0,0], 1.0)
+    
+    # Check 2D shape (n_targets_a, n_targets_b)
+    a2 = np.random.randn(10, 2)
+    b2 = np.random.randn(10, 3)
+    assert pairwise_correlation(a2, b2).shape == (2, 3)
