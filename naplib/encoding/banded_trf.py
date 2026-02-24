@@ -52,7 +52,7 @@ class BandedTRF(BaseEstimator):
         Reshaped coefficients of shape (n_targets, n_features, n_delays, n_trials).
         """
         if self.model_ is None:
-            return None
+            raise AttributeError("BandedTRF has not been fitted yet.")
         
         n_trials = len(self.model_)
         n_targets = self.model_[0].coef_.shape[0]
@@ -131,7 +131,18 @@ class BandedTRF(BaseEstimator):
                     avg_beta = np.mean([trial_betas[j] for j in train_indices], axis=0)
                     y_pred = X_mats[test_idx] @ avg_beta.T
                     
-                    current_alpha_trial_r[test_idx, :] = pairwise_correlation(y[test_idx], y_pred)
+                    # Ensure y is 2D: (samples, targets)
+                    y_true = y[test_idx]
+                    if y_true.ndim == 1:
+                        y_true = y_true[:, np.newaxis]
+                        
+                    # Ensure y_pred is 2D: (samples, targets)
+                    if y_pred.ndim == 1:
+                        y_pred = y_pred[:, np.newaxis]
+
+                    # This returns an array of shape (n_targets,)
+                    r_values = pairwise_correlation(y_true, y_pred)
+                    current_alpha_trial_r[test_idx, :] = r_values
                 
                 avg_r = np.nanmean(current_alpha_trial_r)
                 r_history.append(avg_r)

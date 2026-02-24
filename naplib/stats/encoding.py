@@ -230,7 +230,7 @@ def pairwise_correlation(A, B):
         
     Returns
     -------
-    corr : np.ndarray or float
+    corr : np.ndarray
         Column-wise correlations.
     """
     # Ensure inputs are at least 1D
