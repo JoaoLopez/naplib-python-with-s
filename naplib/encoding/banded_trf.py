@@ -45,24 +45,27 @@ class BandedTRF(BaseEstimator):
     @property
     def _ndelays(self):
         return int(round(self.tmax * self.sfreq)) - int(round(self.tmin * self.sfreq)) + 1
-
+    
     @property
     def coef_(self):
-        """
-        Reshaped coefficients of shape (n_targets, n_features, n_delays, n_trials).
-        """
         if self.model_ is None:
             raise AttributeError("BandedTRF has not been fitted yet.")
         
         n_trials = len(self.model_)
-        n_targets = self.model_[0].coef_.shape[0]
         n_feats = len(self.feature_order_)
         
-        # Stack coefficients from all trial models: (n_targets, n_feats * n_delays, n_trials)
-        all_coefs = np.stack([m.coef_ for m in self.model_], axis=-1)
+        # Force coefficients to be 2D (n_targets, n_features_total)
+        # This fixes the 3.8 vs 3.10 discrepancy
+        trial_coefs = []
+        for m in self.model_:
+            c = m.coef_
+            if c.ndim == 1:
+                c = c[np.newaxis, :]
+            trial_coefs.append(c)
+            
+        n_targets = trial_coefs[0].shape[0]
+        all_coefs = np.stack(trial_coefs, axis=-1)
         
-        # Reshape to (n_targets, n_delays, n_feats, n_trials) 
-        # then transpose to (n_targets, n_feats, n_delays, n_trials)
         return all_coefs.reshape(n_targets, n_feats, self._ndelays, n_trials)
 
     def _prepare_matrix(self, X_list, feature_names, alphas_dict):
