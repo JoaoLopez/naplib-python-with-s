@@ -38,7 +38,6 @@ data['spec'] = [resample(trial['spec'], trial['resp'].shape[0]) for trial in dat
 # Step B: Compute Envelope and Peak Rate
 data['env'] = [zscore(np.sum(trl['spec'], axis=1)) for trl in data]
 data['peak_rate'] = [nl.features.peak_rate(trl['spec'], feat_fs, band=[1, 10]) for trl in data]
-data['peak_rate_onset'] = [(trl > 0).astype(float) for trl in data['peak_rate']]
 
 # Step C: Final alignment and "Null" Noise Injection
 np.random.seed(1)
@@ -69,11 +68,11 @@ tmin, tmax, sfreq = -0.2, 0.5, 100
 alphas = np.logspace(-2, 8, 21) 
 
 # We fit two models with the noise band in different positions
-order_1 = ['env', 'noise', 'peak_rate_onset', 'peak_rate']
+order_1 = ['env', 'noise', 'peak_rate']
 model1 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
 model1.fit(data=data[:-1], feature_order=order_1, target='resp')
 
-order_2 = ['peak_rate_onset', 'peak_rate', 'noise', 'env']
+order_2 = ['peak_rate', 'noise', 'env']
 model2 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
 model2.fit(data=data[:-1], feature_order=order_2, target='resp')
 
@@ -82,8 +81,7 @@ model2.fit(data=data[:-1], feature_order=order_2, target='resp')
 # ----------------------------------------------
 
 colors = {
-'env': '#1f77b4', 'noise': '#7f7f7f',
-'peak_rate': '#d62728', 'peak_rate_onset': '#d62000'
+'env': '#1f77b4', 'noise': '#7f7f7f','peak_rate': '#d62728'
 }
 n_bands = len(order_1)
 
