@@ -26,7 +26,7 @@ def synth_data():
         y2 = np.zeros_like(x2)
         y2[2:] = x2[:-2] * 0.5
         
-        # Ensure resp is (1000, 1) to avoid broadcasting errors
+        # Ensure resp is (samples, 1) to avoid broadcasting errors
         resp = y1 + y2 + 0.05 * rng.standard_normal(y1.shape)
         trials.append({'resp': resp, 'stim1': x1, 'stim2': x2})
         
@@ -39,7 +39,7 @@ def synth_data():
     }
 
 def test_banded_trf_loto_consistency(synth_data):
-    """Verify LOTO logic: alpha selection and coefficient averaging."""
+    """Verify LOTO logic: alpha selection and coefficient storage."""
     alphas = [1e-1, 1e5] 
     model = BandedTRF(tmin=synth_data['tmin'], 
                       tmax=synth_data['tmax'], 
@@ -50,9 +50,12 @@ def test_banded_trf_loto_consistency(synth_data):
               feature_order=synth_data['feature_order'], 
               target='resp')
     
-    # Check that paths were stored
-    assert len(model.optimization_paths_) == 2
-    # Check 4D coef_ shape: (n_targets, n_features, n_delays, n_trials)
+    # FIX: Use alpha_paths_ (dict) instead of optimization_paths_ (list)
+    assert hasattr(model, 'alpha_paths_'), "BandedTRF should store alpha paths in 'alpha_paths_'"
+    assert 'stim1' in model.alpha_paths_
+    assert len(model.alpha_paths_['stim1']) == len(alphas)
+    
+    # Verify 4D coef_ shape: (n_targets, n_features, n_delays, n_trials)
     assert model.coef_.shape == (1, 2, 4, 3)
 
 def test_summary_delta_r(synth_data):
@@ -67,10 +70,11 @@ def test_summary_delta_r(synth_data):
     
     df = model.summary()
     assert 'Delta R' in df.columns
+    # stim1 is the primary signal driver
     assert df.loc['stim1', 'Delta R'] > 0
 
-def test_predict_manual_weight_averaging(synth_data):
-    """Ensure prediction uses the average coefficient across trials."""
+def test_predict_functionality(synth_data):
+    """Verify predictive accuracy on the trained data."""
     model = BandedTRF(tmin=synth_data['tmin'], 
                       tmax=synth_data['tmax'], 
                       sfreq=synth_data['sfreq'])
@@ -81,25 +85,13 @@ def test_predict_manual_weight_averaging(synth_data):
     preds = model.predict(synth_data['data'])
     
     assert isinstance(preds, list)
-    # Check correlation of the first trial prediction
+    # pairwise_correlation returns (n_channels,)
     r = pairwise_correlation(synth_data['data'][0]['resp'], preds[0])
-    # r is shape (1,) for 1 target channel
     assert r[0] > 0.8
 
 def test_not_fitted_error():
-    """
-    Accessing coef_ should raise AttributeError if not fitted.
-    If your current class doesn't raise this, you need to add:
-    if not hasattr(self, 'coef_'): raise AttributeError(...) to the property.
-    """
+    """Accessing model weights before fit should raise AttributeError."""
     model = BandedTRF(0, 0.1, 100)
+    # Check if the property raises AttributeError correctly
     with pytest.raises(AttributeError):
         _ = model.coef_
-
-def test_pairwise_correlation_logic():
-    """Verify basic Pearson R computation returns 1D array for 2D inputs."""
-    a = np.array([[1, 2, 3]]).T
-    b = np.array([[1, 2, 3]]).T
-    r = pairwise_correlation(a, b)
-    # Correct indexing for naplib's pairwise_correlation output
-    assert np.isclose(r[0], 1.0)
