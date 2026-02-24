@@ -29,12 +29,14 @@ from scipy.signal import resample
 from scipy.stats import zscore
 import naplib as nl
 from naplib.encoding import TRF, BandedTRF
-from sklearn.linear_model import RidgeCV
+from sklearn.linear_model import Ridge
 
 ###############################################################################
 # 1. Prepare Synthetic Data (Keeping your extraction logic)
 ###############################################################################
 data = nl.io.load_speech_task_data()
+n_trials = 5
+data = data[:n_trials]
 feat_fs = 100
 
 data['aud_spec'] = [resample(nl.features.auditory_spectrogram(trl['sound'], 11025), trl['resp'].shape[0], axis=0) for trl in data]
@@ -48,7 +50,7 @@ for i in range(len(data)):
 
 tmin, tmax, sfreq = -0.1, 0.5, 100
 feature_list = ['env', 'noise', 'peak_rate']
-alphas = np.logspace(0, 7, 8)
+alphas = np.logspace(-2, 7, 10)
 
 ###############################################################################
 # 2. Fit Standard TRF (Iterative RidgeCV for direct comparison)
@@ -60,29 +62,69 @@ prev_r = 0
 
 for i in range(len(feature_list)):
     current_feats = feature_list[:i+1]
+    
+    # 1. Prepare feature matrices for each trial
     all_X = []
     for trl in data:
-        curr_X = []
-        for ft in current_feats:
-            if trl[ft].ndim==1:
-                curr_X.append(trl[ft][:,np.newaxis])
-            else:
-                curr_X.append(trl[ft])
-        all_X.append(curr_X)
-    all_X = [np.concatenate(x, axis=1) for x in all_X]
+        curr_X = [trl[ft][:, np.newaxis] if trl[ft].ndim == 1 else trl[ft] for ft in current_feats]
+        all_X.append(np.concatenate(curr_X, axis=1))
+    
+    y = data['resp']
+    
+    best_alpha_r = -np.inf
+    best_alpha_total_r = 0
 
-    # RidgeCV performs leave-one-trial-out (or k-fold) internally
-    # We use cv=5 as requested to find the best global alpha for the current feature set
-    est = RidgeCV(alphas=alphas, cv=5)
-    model = TRF(tmin, tmax, sfreq, estimator=est)
-    model.fit(X=all_X, y=data['resp'])
-    
-    # Score on held-out trial
-    curr_r = np.mean(model.score(X=all_X, y=data['resp']))
-    
-    standard_total_r.append(curr_r)
-    standard_delta_r.append(curr_r - prev_r)
-    prev_r = curr_r
+    # 2. Sweep over alpha values
+    for alpha in alphas:
+        # Fit a model for EVERY trial individually
+        trial_models = []
+        for t_idx in range(n_trials):
+            m = TRF(tmin, tmax, sfreq, estimator=Ridge(alpha=1.0))
+            # Fitting on a single trial (list of 1 trial)
+            m.fit(X=[all_X[t_idx]/alpha], y=[y[t_idx]])
+            trial_models.append(m)
+        
+        # 3. Perform LOTO Prediction: 
+        # For each trial, predict using the average of all OTHER trial models
+        loto_trial_rs = []
+        for t_idx in range(n_trials):
+            # Get indices for all trials except current one
+            other_indices = [idx for idx in range(n_trials) if idx != t_idx]
+            
+            # Average the coefficients and intercepts
+            avg_coef = np.mean([
+                np.stack([mmdl.coef_ for mmdl in trial_models[idx].models_], axis=1)
+                 for idx in other_indices], axis=0)
+
+            # 2. Prepare the delayed X matrix for the held-out trial
+            # _delay_time_series produces shape (n_samples, n_features * n_delays)
+            from mne.decoding.receptive_field import _delay_time_series
+            x_delayed = _delay_time_series(all_X[t_idx], tmin, tmax, sfreq, fill_mean=False)
+            x_delayed = x_delayed.reshape(x_delayed.shape[0], -1)
+            
+            # 3. Manually compute the matrix product: Y_hat = XW + b
+            # x_delayed: (samples, feats*lags), avg_coef.T: (feats*lags, targets)
+            y_hat = x_delayed @ avg_coef
+            
+            # 4. Compute correlation with ground truth
+            # nl.stats.pairwise_correlation computes r for each target channel
+            r = nl.stats.pairwise_correlation(y[t_idx], y_hat)
+            loto_trial_rs.append(np.mean(r))
+
+        # Average R across all LOTO folds for this alpha
+        avg_alpha_r = np.mean(loto_trial_rs)
+        
+        if avg_alpha_r > best_alpha_r:
+            best_alpha_r = avg_alpha_r
+            # Store the final model (averaged across all trials) for kernel plotting
+            final_best_model = avg_coef 
+            
+    # 4. Record results for this feature set
+    standard_total_r.append(best_alpha_r)
+    standard_delta_r.append(best_alpha_r - prev_r)
+    prev_r = best_alpha_r
+
+print(f"Final Standard LOTO Total R: {standard_total_r[-1]:.4f}")
 
 ###############################################################################
 # 3. Fit Banded TRF (Sequential Band Optimization)
@@ -111,12 +153,13 @@ axes[0].grid(axis='y', alpha=0.3)
 # Comparison B: Delta R (Unique Variance)
 x = np.arange(len(feature_list))
 width = 0.35
-axes[1].bar(x - width/2, standard_delta_r, width, label=r'Standard Delta $R$', color='#aaaaaa')
-axes[1].bar(x + width/2, df_summary['Delta R'], width, label=r'Banded Delta $R$', color='#d62728')
+axes[1].bar(x - width/2, np.abs(standard_delta_r), width, label=r'Standard Delta $R$', color='#aaaaaa')
+axes[1].bar(x + width/2, np.abs(df_summary['Delta R']), width, label=r'Banded Delta $R$', color='#d62728')
 axes[1].set_xticks(x)
 axes[1].set_xticklabels(feature_list)
 axes[1].set_title('Marginal Improvement (Delta $R$)', fontweight='bold')
 axes[1].set_ylabel(r'$\Delta R$ Improvement')
+axes[1].set_yscale('log')
 axes[1].legend()
 
 plt.tight_layout()
@@ -132,7 +175,7 @@ fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
 # Plot Standard TRF Kernels (from the final model containing all features)
 # Standard TRF.coef_ is usually (n_targets, n_features_total, n_delays)
 # Note: we must slice the n_features_total to match our bands
-std_coef = model.coef_[best_ch] 
+std_coef = final_best_model[:,best_ch].reshape(len(feature_list), len(lags))
 
 # Plot Banded TRF Kernels
 # BandedTRF.coef_ is (n_targets, n_bands, n_delays, n_trials)
