@@ -100,6 +100,38 @@ class BandedTRF(BaseEstimator):
         return processed_trials
 
     def fit(self, data, feature_order, target='resp'):
+        """
+        Fit the Iterative Banded Ridge model using leave-one-trial-out cross-validation.
+
+        The model fits features sequentially according to `feature_order`. For each 
+        new feature band, an optimal regularization parameter (alpha) is selected 
+        from `self.alphas` by maximizing the average prediction correlation across 
+        held-out trials.
+
+        Parameters
+        ----------
+        data : naplib.OutStruct or list of dict
+            The data containing the features and target signal. Must be a format 
+            compatible with `naplib.utils.parse_outstruct_args`.
+        feature_order : list of str
+            The ordered list of field names in `data` to be used as feature bands. 
+            Features are added to the model sequentially.
+        target : str, default='resp'
+            The field name in `data` containing the dependent variable (e.g., 
+            neural responses).
+
+        Returns
+        -------
+        self : BandedTRF
+            Returns the instance of the fitted model.
+
+        Notes
+        -----
+        The cross-validation uses 'coefficient averaging' for efficiency. For 
+        each alpha in the sweep, a model is fit to each trial individually. 
+        The prediction for a held-out trial $i$ is generated using the mean 
+        coefficients of all trials $j \neq i$.
+        """
         self.feature_order_ = feature_order
         self.target_ = target
         
@@ -173,6 +205,42 @@ class BandedTRF(BaseEstimator):
         return self
 
     def predict(self, data, feature_names=None):
+        """
+        Predict target responses using the fitted Banded Ridge model.
+
+        This method performs Leave-One-Trial-Out (LOTO) prediction. For each 
+        trial in the input data, it averages the regression coefficients 
+        from all *other* trials (fitted during training) to generate the 
+        prediction for the current trial.
+
+        Parameters
+        ----------
+        data : naplib.OutStruct or list of dict
+            The data containing the features to predict from. Must contain 
+            the same number of trials as used during `fit`.
+        feature_names : list of str, optional
+            The subset of features to use for prediction. If None (default), 
+            uses all features specified in the `feature_order` during `fit`. 
+            This allows for isolating the contribution of specific bands.
+
+        Returns
+        -------
+        preds : list of np.ndarray
+            Predicted target values for each trial. Each element is an 
+            array of shape (n_samples, n_targets).
+
+        Raises
+        ------
+        ValueError
+            If the model has not been fitted, or if the number of trials 
+            in `data` does not match the number of models in `self.model_`.
+
+        Notes
+        -----
+        Because this model stores a separate fit for every trial to enable 
+        efficient cross-validation, the `predict` step requires the input 
+        to have a one-to-one mapping with the training trials.
+        """
         if self.model_ is None:
             raise ValueError("Model must be fitted before calling predict.")
         
@@ -226,6 +294,39 @@ class BandedTRF(BaseEstimator):
         return preds
 
     def summary(self, channel=None):
+        """
+        Generate a statistical report of feature contributions and model performance.
+
+        Calculates the incremental improvement (Delta R) for each feature band 
+        added to the model and performs a one-sample t-test (alternative='greater') 
+        across trials to determine if the contribution is significantly greater 
+        than zero.
+
+        Parameters
+        ----------
+        channel : int, optional
+            The specific target channel (e.g., electrode or sensor) to summarize. 
+            If None (default), results are averaged across all channels.
+
+        Returns
+        -------
+        df : pandas.DataFrame
+            A summary table indexed by 'Feature' containing:
+            - Total R: Cumulative correlation after adding this feature.
+            - Delta R: Incremental correlation increase attributed to this feature.
+            - Alpha: The optimized regularization parameter for the band.
+            - p-value: Significance of the Delta R across trials (t-test).
+
+        Notes
+        -----
+        The Delta R for the first feature is its Total R. For subsequent 
+        features, Delta R is calculated as:
+        $ DeltaR_{n} = R_{n} - R_{n-1} $
+        
+        Significant p-values suggest that the addition of a specific feature 
+        band significantly improves the model's predictive power on 
+        held-out data.
+        """
         if self.scores_ is None:
             raise ValueError("Model must be fitted before calling summary.")
 
