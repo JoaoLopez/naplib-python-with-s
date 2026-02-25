@@ -100,7 +100,7 @@ class BandedTRF(BaseEstimator):
         return processed_trials
 
     def fit(self, data, feature_order, target='resp'):
-        """
+        r"""
         Fit the Iterative Banded Ridge model using leave-one-trial-out cross-validation.
 
         The model fits features sequentially according to `feature_order`. For each 
@@ -294,7 +294,7 @@ class BandedTRF(BaseEstimator):
         return preds
 
     def summary(self, channel=None):
-        """
+        r"""
         Generate a statistical report of feature contributions and model performance.
 
         Calculates the incremental improvement (Delta R) for each feature band 
@@ -321,7 +321,7 @@ class BandedTRF(BaseEstimator):
         -----
         The Delta R for the first feature is its Total R. For subsequent 
         features, Delta R is calculated as:
-        $ DeltaR_{n} = R_{n} - R_{n-1} $
+        $ \Delta R_{n} = R_{n} - R_{n-1} $
         
         Significant p-values suggest that the addition of a specific feature 
         band significantly improves the model's predictive power on 

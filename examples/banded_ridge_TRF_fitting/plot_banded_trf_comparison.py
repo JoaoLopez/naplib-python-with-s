@@ -32,7 +32,7 @@ from mne.decoding.receptive_field import _delay_time_series
 # A "noise" feature is added to test regularization robustness.
 
 data = nl.io.load_speech_task_data()
-n_trials = 4
+n_trials = 3
 data = data[:n_trials]
 feat_fs = 100
 

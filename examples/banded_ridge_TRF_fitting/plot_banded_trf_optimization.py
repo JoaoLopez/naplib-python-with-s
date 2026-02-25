@@ -30,7 +30,7 @@ from naplib.encoding import BandedTRF
 # speech envelope, peak rate, and a "Null" noise band for validation.
 
 data = nl.io.load_speech_task_data()
-n_trials = 4
+n_trials = 3
 data = data[:n_trials]
 
 # Standardize neural responses
