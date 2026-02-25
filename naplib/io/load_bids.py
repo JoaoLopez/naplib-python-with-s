@@ -3,7 +3,7 @@ from tqdm.auto import tqdm
 from naplib import logger
 from ..data import Data
 
-ACCEPTED_CROP_BY = ['onset', 'durations']
+ACCEPTED_CROP_BY = ['onset', 'durations', None]
 
 def load_bids(root,
               subject,
@@ -126,8 +126,9 @@ def load_bids(root,
     for trial in tqdm(range(len(raws))):
         trial_data = {}
         trial_data['event_index'] = trial
-        if 'description' in raw_responses[trial].annotations[0]:
-            trial_data['description'] = raw_responses[trial].annotations[0]['description']
+        if raw_responses[trial].annotations:
+            if 'description' in raw_responses[trial].annotations[0]:
+                trial_data['description'] = raw_responses[trial].annotations[0]['description']
         if raw_stims[trial] is not None:
             trial_data['stim'] = raw_stims[trial].get_data().transpose(1,0) # time by channels
             trial_data['stim_ch_names'] = raw_stims[trial].info['ch_names']
@@ -141,7 +142,8 @@ def load_bids(root,
         new_data.append(trial_data)  
 
     data_ = Data(new_data, strict=False)
-    data_.set_mne_info(raw_info)
+    if raw_info is not None:
+        data_.set_mne_info(raw_info)
     return data_
     
     
@@ -154,14 +156,14 @@ def _crop_raw_bids(raw_instance, crop_by, befaft):
     raw_instance : mne.io.Raw-like object
     
     crop_by : string, default='onset'
-        One of ['onset', 'annotations']. If crop by 'onset', each trial is split
+        One of ['onset', 'annotations', None]. If crop by 'onset', each trial is split
         by the onset of each event defined in the BIDS file structure and each
         trial ends when the next trial begins. If crop by 'annotations', each trial is split
         by the onset of each event defined in the BIDS file structure and each
         trial lasts the duration specified by the event. This is typically not desired
         when the events are momentary stimulus presentations that have very short duration
         because only the responses during the short duration of the event will be saved, and
-        all of the following responses are truncated.
+        all of the following responses are truncated. If None, no cropping.
     
      Returns
      -------
@@ -169,6 +171,8 @@ def _crop_raw_bids(raw_instance, crop_by, befaft):
          The cropped raw objects.
 
     '''
+    if crop_by == None:
+        return [raw_instance.copy()]
 
     max_time = (raw_instance.n_times - 1) / raw_instance.info['sfreq']
     
