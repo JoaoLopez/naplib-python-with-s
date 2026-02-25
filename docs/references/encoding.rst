@@ -18,7 +18,7 @@ BandedTRF
 
 .. autoclass:: BandedTRF
     :members:
-    :exclude-members: get_params, set_params
+    :exclude-members: get_params, set_params, set_fit_request, set_predict_request
 
 .. minigallery:: naplib.encoding.BandedTRF
         :add-heading: Examples using ``BandedTRF``
