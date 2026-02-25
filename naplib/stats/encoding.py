@@ -213,48 +213,53 @@ def discriminability(D, L, elec_mode='all', method='lda'):
 
 import numpy as np
 
-def pairwise_correlation(A, B):
+import numpy as np
+
+def pairwise_correlation(A, B, axis=0):
     r"""
-    Compute Pearson correlation between corresponding columns of A and B.
+    Compute Pearson correlation between A and B along a specified axis.
     
-    If inputs are 2D (time, channels), returns a 1D array of correlations 
-    where the i-th element is the correlation between A[:, i] and B[:, i].
-    If inputs are 1D, returns a single float.
+    The correlation is computed pairwise for each corresponding element 
+    along the remaining dimensions. The output will have the same shape 
+    as the inputs, but with the specified ``axis`` removed.
     
+    The correlation is calculated as:
+    $$r = \frac{\sum (A_i - \bar{A})(B_i - \bar{B})}{\sqrt{\sum (A_i - \bar{A})^2 \sum (B_i - \bar{B})^2}}$$
+
     Parameters
     ----------
     A : np.ndarray
-        First array, shape (n_samples, n_channels) or (n_samples,).
+        First array.
     B : np.ndarray
-        Second array, shape (n_samples, n_channels) or (n_samples,).
+        Second array. Must be the same shape as A.
+    axis : int, default=0
+        The axis along which to compute the correlation (e.g., the time dimension).
         
     Returns
     -------
-    corr : np.ndarray
-        Column-wise correlations.
+    corr : np.ndarray or float
+        Pairwise correlations. If inputs are 1D, returns a float. 
+        Otherwise, returns an array of shape equal to the input shape 
+        with the ``axis`` dimension removed.
     """
-    # Ensure inputs are at least 1D
     A = np.asarray(A)
     B = np.asarray(B)
     
-    # Standardize: Center the data
-    am = A - np.mean(A, axis=0)
-    bm = B - np.mean(B, axis=0)
+    if A.shape != B.shape:
+        raise ValueError(f"A and B must have the same shape, but got {A.shape} and {B.shape}")
+
+    # 1. Center the data along the specified axis
+    # keepdims=True is essential for broadcasting subtraction
+    am = A - np.mean(A, axis=axis, keepdims=True)
+    bm = B - np.mean(B, axis=axis, keepdims=True)
     
-    # Compute column-wise sum of squares (variance proxy)
-    # Using einsum or axis-based sum for robustness
-    a_ss = np.sum(am**2, axis=0)
-    b_ss = np.sum(bm**2, axis=0)
+    # 2. Compute sum of squares (variance proxies)
+    a_ss = np.sum(am**2, axis=axis)
+    b_ss = np.sum(bm**2, axis=axis)
     
-    # Compute column-wise covariance proxy
-    # For 2D: pairwise product sum across the time axis (axis 0)
-    # For 1D: simple dot product
-    if A.ndim == 1:
-        coscale = np.dot(am, bm)
-    else:
-        # Summing product across the 'time' dimension for each channel
-        coscale = np.sum(am * bm, axis=0)
-        
-    # Return normalized correlation
-    # 1e-15 added to denominator to prevent division by zero
+    # 3. Compute covariance proxy
+    coscale = np.sum(am * bm, axis=axis)
+    
+    # 4. Return normalized correlation
+    # 1e-15 prevents division by zero for constant signals
     return coscale / (np.sqrt(a_ss * b_ss) + 1e-15)
