@@ -268,7 +268,7 @@ def test_interpolate_electrodes_onto_brain(data):
     
     # Check that vertices near the electrode have the value, and others are 0/nan
     # Note: the code sets self.overlay[updated_vertices] = smoothed_values
-    assert lh.overlay.max() == 10.0
+    assert np.isclose(lh.overlay.max(), 10.0)
     assert np.any(lh.overlay == 10.0)
     
     # 3. Test ROI filtering
