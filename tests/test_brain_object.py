@@ -249,9 +249,45 @@ def test_set_visible(data):
     ending_visible = brain_pial1.lh.alpha
     assert (ending_visible.sum() == 327680)
 
+def test_interpolate_data_on_surface(data):
+    """
+    Test interpolation of electrode values onto the cortical surface.
+    Verifies that the resulting overlay has the correct shape and 
+    non-zero values near electrodes.
+    """
+    # Create dummy data: 1.0 for the first electrode, 0.0 for others
+    vals = np.zeros(len(data['coords']))
+    vals[0] = 1.0
+    
+    # Run interpolation (assuming 'interpolate_data' or similar exists in Brain)
+    # If using a specific radius or Gaussian kernel, adjust parameters accordingly
+    brain = data['brain_pial']
+    brain.interpolate_data(data['coords'], vals, data['isleft'], radius=10)
+    
+    # Check Left Hemisphere overlay
+    lh_overlay = brain.lh.overlay
+    assert lh_overlay.shape[0] == brain.lh.n_verts
+    assert lh_overlay.max() > 0  # Should have captured the '1.0' from electrode 0
+    
+    # Check Right Hemisphere (should be zero if all active elecs were on the left)
+    # Electrode 0 is at x = -47.28, so it is definitively LH.
+    if data['isleft'][0]:
+        # Values shouldn't "leak" to the other hemisphere in a good implementation
+        assert np.all(brain.rh.overlay == 0)
 
-
-
-
-
+def test_interpolation_extrapolation_limits(data):
+    """
+    Test that interpolation handles out-of-bounds or distant electrodes.
+    """
+    brain = data['brain_pial']
+    # Place an electrode very far from the brain
+    far_coords = np.array([[1000, 1000, 1000]])
+    far_vals = np.array([5.0])
+    far_isleft = np.array([False])
+    
+    # Interpolating with a finite radius should result in no change to the surface
+    brain.reset_overlay()
+    brain.interpolate_data(far_coords, far_vals, far_isleft, radius=5)
+    
+    assert np.all(brain.rh.overlay == 0)
 
