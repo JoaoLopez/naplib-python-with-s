@@ -65,8 +65,9 @@ class BandedTRF(BaseEstimator):
             
         n_targets = trial_coefs[0].shape[0]
         all_coefs = np.stack(trial_coefs, axis=-1)
+        n_feat_dim = sum(self.feat_dims_)
         
-        return all_coefs.reshape(n_targets, n_feats, self._ndelays, n_trials)
+        return all_coefs.reshape(n_targets, n_feat_dim, self._ndelays, n_trials)
 
     def _prepare_matrix(self, X_list, feature_names, alphas_dict):
         processed_trials = []
