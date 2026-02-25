@@ -10,6 +10,7 @@ def load_bids(root,
               datatype,
               task,
               suffix,
+              run=None,
               session=None,
               befaft=[0, 0],
               crop_by='onset',
@@ -33,6 +34,8 @@ def load_bids(root,
         Task name.
     suffix : string
         Suffix name in file naming. This is often the same as datatype.
+    run : string
+        Run name.
     session : string
         Session name.
     befaft : list or array-like or length 2, default=[0, 0]
@@ -89,7 +92,7 @@ def load_bids(root,
         raise ValueError(f'Invalid "crop_by" input. Expected one of {ACCEPTED_CROP_BY} but got "{crop_by}"')
     
     bids_path = BIDSPath(subject=subject, root=root, session=session, task=task,
-                         suffix=suffix, datatype=datatype)
+                         run=run, suffix=suffix, datatype=datatype)
     
     raw = read_raw_bids(bids_path=bids_path)
             
