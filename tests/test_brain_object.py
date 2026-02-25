@@ -207,7 +207,8 @@ def test_plotly_electrode_coloring(data):
 
 def test_plotly_electrode_coloring_by_value(data):
     colors = ['k' if isL else 'r' for isL in data['isleft']]
-    fig, axes = plot_brain_elecs(data['brain_inflated'], data['coords'], data['isleft'], values=data['isleft'], vmin=-1, vmax=2, cmap='binary', hemi='both', view='medial', backend='plotly')
+    fig, axes = plot_brain_elecs(data['brain_inflated'], data['coords'], data['isleft'], values=data['isleft'],
+     vmin=-1, vmax=2, cmap='binary', hemi='both', view='medial', backend='plotly')
     assert len(fig.data) == 4
     assert fig.data[0]['x'].shape == (163842,)
     assert fig.data[0]['facecolor'].shape == (327680, 4)
