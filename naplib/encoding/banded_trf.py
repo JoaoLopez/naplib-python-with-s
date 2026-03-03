@@ -100,7 +100,7 @@ class BandedTRF(BaseEstimator):
             processed_trials.append(delayed.reshape(delayed.shape[0], -1))
         return processed_trials
 
-    def fit(self, data, feature_order, target='resp'):
+    def fit(self, data=None, X=['aud'], y='resp'):
         r"""
         Fit the Iterative Banded Ridge model using leave-one-trial-out cross-validation.
 
@@ -111,15 +111,22 @@ class BandedTRF(BaseEstimator):
 
         Parameters
         ----------
-        data : naplib.OutStruct or list of dict
-            The data containing the features and target signal. Must be a format 
-            compatible with `naplib.utils.parse_outstruct_args`.
-        feature_order : list of str
-            The ordered list of field names in `data` to be used as feature bands. 
-            Features are added to the model sequentially.
-        target : str, default='resp'
-            The field name in `data` containing the dependent variable (e.g., 
-            neural responses).
+        data : naplib.Data instance, optional
+            Data object containing data to be normalized in one of the field.
+            If not given, must give the X and y data directly as the ``X``
+            and ``y`` arguments. 
+        X : list of str | list of list of np.ndarrays
+            Data to be used as predictor in the regression. Should be a list, 
+            in which each element is feature, corresponding to a list of trials, 
+            each of shape (time, num_features).
+            If a string, it must specify a list of fields of the Data
+            provided in the first argument.
+        y : str | list of np.ndarrays or a multidimensional np.ndarray
+            Data to be used as target(s) in the regression. Once arranged,
+            should be of shape (time, num_targets[, num_features_y]).
+            If a string, it must specify one of the fields of the Data
+            provided in the first argument. If a multidimensional array, first dimension
+            indicates the trial/instances.
 
         Returns
         -------
@@ -349,13 +356,14 @@ class BandedTRF(BaseEstimator):
             if len(clean_sample) < 2 or np.all(clean_sample == clean_sample[0]):
                 p_val = 1.0 if np.mean(clean_sample) <= 0 else 0.0
             else:
-                _, p_val = ttest_1samp(clean_sample, 0, alternative='greater')
+                t_val, p_val = ttest_1samp(clean_sample, 0, alternative='greater')
             
             summary_results.append({
                 'Feature': feat,
                 'Total R': np.nanmean(r_report[:, f_idx]),
                 'Delta R': np.nanmean(dr_report[:, f_idx]),
                 'Alpha': self.feature_alphas_[feat],
+                't-value': t_val,
                 'p-value': p_val,
             })
 
