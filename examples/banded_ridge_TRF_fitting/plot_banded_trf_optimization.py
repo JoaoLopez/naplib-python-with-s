@@ -108,7 +108,7 @@ for b_idx in range(n_bands):
         prev_r = 0 if b_idx == 0 else np.max(mdl.alpha_paths_[b_idx-1])
         delta_path = path - prev_r
         
-        best_alpha = mdl.feature_alphas_[feat]
+        best_alpha = mdl.feature_alphas_[b_idx]
         peak_delta = np.max(delta_path)
         
         axes[i].semilogx(alphas, delta_path, marker='o', color=colors[feat], label=f'Path: {feat}')

@@ -12,6 +12,7 @@ def load_bids(root,
               suffix,
               run=None,
               session=None,
+              check=True,
               befaft=[0, 0],
               crop_by='onset',
               info_include=['sfreq', 'ch_names'],
@@ -38,6 +39,8 @@ def load_bids(root,
         Run name.
     session : string
         Session name.
+    check : bool
+        If True, enforces BIDS conformity. Defaults to True.
     befaft : list or array-like or length 2, default=[0, 0]
         Amount of time (in sec.) before and after each trial's true duration to include
         in the trial for the Data. For example, if befaft=[1,1] then if each trial's
@@ -92,7 +95,7 @@ def load_bids(root,
         raise ValueError(f'Invalid "crop_by" input. Expected one of {ACCEPTED_CROP_BY} but got "{crop_by}"')
     
     bids_path = BIDSPath(subject=subject, root=root, session=session, task=task,
-                         run=run, suffix=suffix, datatype=datatype)
+                         run=run, suffix=suffix, datatype=datatype, check=check)
     
     raw = read_raw_bids(bids_path=bids_path)
             

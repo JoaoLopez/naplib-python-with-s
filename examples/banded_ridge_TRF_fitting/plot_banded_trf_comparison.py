@@ -200,7 +200,7 @@ for b_idx, feat in enumerate(feature_list):
     prev_banded_r = 0 if b_idx == 0 else np.max(banded_model.alpha_paths_[b_idx-1])
     banded_delta_path = banded_path - prev_banded_r
     
-    best_banded_alpha = banded_model.feature_alphas_[feat]
+    best_banded_alpha = banded_model.feature_alphas_[b_idx]
     peak_banded_delta = np.max(banded_delta_path)
     
     axes[1].semilogx(alphas, banded_delta_path, 'o-', color=colors[feat], label=f'Band: {feat}')
