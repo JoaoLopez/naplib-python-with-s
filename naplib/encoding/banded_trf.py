@@ -29,12 +29,12 @@ class BandedTRF(BaseEstimator):
     basis_dict : dict, optional
         Dictionary mapping feature names to basis objects.
     """
-    def __init__(self, tmin, tmax, sfreq, alphas=None, basis_dict={}):
+    def __init__(self, tmin, tmax, sfreq, alphas=None, basis_dict=None):
         self.tmin = tmin
         self.tmax = tmax
         self.sfreq = sfreq
         self.alphas = alphas if alphas is not None else np.logspace(-2, 5, 8)
-        self.basis_dict = basis_dict
+        self.basis_dict = basis_dict if basis_dict is not None else {}
         self.feature_alphas_ = []
         self.alpha_paths_ = []
         self.feature_order_ = []
@@ -86,6 +86,7 @@ class BandedTRF(BaseEstimator):
                 if x.ndim == 1:
                     x = x[:, np.newaxis]
                 
+                name = self.feature_order_[i]
                 if name in self.basis_dict:
                     x = self.basis_dict[name].transform(x) 
                 
@@ -144,7 +145,7 @@ class BandedTRF(BaseEstimator):
         else:
             self.feature_order_ = [chr(i+65) for i in range(len(X))]
         if isinstance(y, str):
-            self.target_ = target
+            self.target_ = y
         else:
             self.target_ = 'target'
         
@@ -156,7 +157,7 @@ class BandedTRF(BaseEstimator):
         self.n_targets_ = y[0].shape[1]
 
         self.scores_ = np.zeros((n_trials, self.n_targets_, len(X)))
-        self.feature_alphas_ = np.zeros((len(X), ))
+        self.feature_alphas_ = []
         self.alpha_paths = np.zeros((len(X), len(self.alphas)))
 
         for i, current_feat in enumerate(X):
@@ -165,7 +166,7 @@ class BandedTRF(BaseEstimator):
             r_history = []
             best_r_per_trial_ch = None
             
-            for alpha in tqdm(self.alphas, desc=f"Optimizing {current_feat}", leave=False):
+            for alpha in tqdm(self.alphas, desc=f"Optimizing {self.feature_order_[i]}", leave=False):
                 temp_alphas = self.feature_alphas_ + [alpha]
                 X_mats = self._prepare_matrix(X[:i+1], temp_alphas)
                 
@@ -197,7 +198,7 @@ class BandedTRF(BaseEstimator):
                     best_r_per_trial_ch = current_alpha_trial_r
             
             self.feature_alphas_.append(best_alpha)
-            self.alpha_paths_[current_feat] = np.array(r_history)
+            self.alpha_paths_[i, :] = np.array(r_history)
             self.scores_[:, :, i] = best_r_per_trial_ch
 
         # Final fit on each trial separately
@@ -205,7 +206,7 @@ class BandedTRF(BaseEstimator):
         self.model_ = [Ridge(alpha=1.0).fit(tx, ty) for tx, ty in zip(final_X, y)]
         
         self.feat_dims_ = []
-        for i, name in enumerate(feature_order):
+        for i, name in enumerate(self.feature_order_):
             x_sample = X[i][0]
             if isinstance(x_sample, list): x_sample = x_sample[0]
             if x_sample.ndim == 1: x_sample = x_sample[:, None]
@@ -257,15 +258,9 @@ class BandedTRF(BaseEstimator):
         if self.model_ is None:
             raise ValueError("Model must be fitted before calling predict.")
         
-        requested_features = feature_names if feature_names else self.feature_order_
-        
-        # Standardize feature data to list of trial-lists
-        feat_data_list = []
-        for f in requested_features:
-            f_data = _parse_outstruct_args(data, f)
-            feat_data_list.append(f_data if isinstance(f_data, list) else [f_data])
+        X = [_parse_outstruct_args(data, x) for x in X]
 
-        X_mats = self._prepare_matrix(feat_data_list, requested_features, self.feature_alphas_)
+        X_mats = self._prepare_matrix(X, self.feature_alphas_)
         n_trials = len(X_mats)
         
         if n_trials != len(self.model_):
@@ -279,17 +274,6 @@ class BandedTRF(BaseEstimator):
             # Expand (trials, features) -> (trials, 1_target, features)
             all_coefs = all_coefs[:, np.newaxis, :]
 
-        # Handle feature masking if a subset is requested
-        mask = np.ones(all_coefs.shape[2], dtype=bool)
-        if feature_names is not None:
-            mask = np.zeros(all_coefs.shape[2], dtype=bool)
-            current_col = 0
-            for i, f in enumerate(self.feature_order_):
-                num_cols = self.feat_dims_[i] * self._ndelays
-                if f in requested_features:
-                    mask[current_col : current_col + num_cols] = True
-                current_col += num_cols
-
         preds = []
         for i in range(n_trials):
             # Indices for all trials except the current one
@@ -298,8 +282,8 @@ class BandedTRF(BaseEstimator):
             # Average coefficients and intercepts from the other trials
             loto_coef = np.mean(all_coefs[loto_indices], axis=0)
             
-            # Apply feature mask
-            sliced_coef = loto_coef[:, mask]
+            # Only use first coef features if using feature subset
+            sliced_coef = loto_coef[:, :X_mats[i].shape[1]]
             
             # Predict for the current trial
             preds.append(X_mats[i] @ sliced_coef.T)
@@ -367,7 +351,7 @@ class BandedTRF(BaseEstimator):
                 'Feature': feat,
                 'Total R': np.nanmean(r_report[:, f_idx]),
                 'Delta R': np.nanmean(dr_report[:, f_idx]),
-                'Alpha': self.feature_alphas_[feat],
+                'Alpha': self.feature_alphas_[f_idx],
                 't-value': t_val,
                 'p-value': p_val,
             })
