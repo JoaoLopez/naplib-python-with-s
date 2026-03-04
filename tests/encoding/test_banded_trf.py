@@ -1,18 +1,14 @@
 import pytest
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
 from naplib import Data
 from naplib.encoding import BandedTRF
-from naplib.stats import pairwise_correlation
 
 @pytest.fixture(scope='module')
 def synth_data():
     """
     Generate synthetic data with 2 target channels.
-    This ensures that Ridge.coef_ returns a 2D array (n_targets, n_features),
-    making the stacked 'all_coefs' 3D (n_trials, n_targets, n_features) 
-    and preventing IndexErrors in the masking logic.
+    Matches BandedTRF expected input format: list of arrays or Data object.
     """
     rng = np.random.default_rng(42)
     fs, n_samples, n_trials = 100, 1000, 3
@@ -40,23 +36,24 @@ def test_banded_trf_loto_consistency(synth_data):
                       sfreq=synth_data['sfreq'], alphas=[0.1, 10.0])
     model.fit(data=synth_data['data'], X=synth_data['feature_order'], y='resp')
     
-    # Shape calculation: 2 targets, 2 features, 4 delays, 3 trials.
-    # ndelays = (0.03 * 100) - (0 * 100) + 1 = 4.
+    # Shape calculation: 2 targets, 2 feature bands, 4 delays, 3 trials.
+    # ndelays = round(0.03*100) - round(0*100) + 1 = 4.
+    # Note: If stim1 and stim2 are single-dimension, total features = 2.
     assert model.coef_.shape == (2, 2, 4, 3)
 
 def test_predict_masking_logic(synth_data):
-    """Verify that partial feature prediction works with multi-channel targets."""
+    """Verify that partial feature prediction works (greedy logic)."""
     model = BandedTRF(tmin=synth_data['tmin'], tmax=synth_data['tmax'], sfreq=synth_data['sfreq'])
     model.fit(data=synth_data['data'], X=synth_data['feature_order'], y='resp')
     
-    # Full prediction: should match target shape (samples, channels)
-    preds_all = model.predict(synth_data['data'])
+    # 1. Full prediction
+    preds_all = model.predict(data=synth_data['data'], X=synth_data['feature_order'])
     assert len(preds_all) == 3
     assert preds_all[0].shape == (1000, 2)
     
-    # Partial prediction: Triggers the internal mask logic
-    # multi-channel data ensures all_coefs.ndim == 3, avoiding IndexError
-    preds_sub = model.predict(synth_data['data'], feature_names=['stim1'])
+    # 2. Partial prediction (subset of features)
+    # This triggers the 'Using reduced TRF' print/logic in predict()
+    preds_sub = model.predict(data=synth_data['data'], X=['stim1'])
     assert len(preds_sub) == 3
     assert preds_sub[0].shape == (1000, 2)
 
@@ -65,12 +62,16 @@ def test_summary_p_values(synth_data):
     model = BandedTRF(tmin=synth_data['tmin'], tmax=synth_data['tmax'], sfreq=synth_data['sfreq'])
     model.fit(data=synth_data['data'], X=synth_data['feature_order'], y='resp')
     
+    # Test Global Summary
     df = model.summary()
     assert isinstance(df, pd.DataFrame)
     assert 'Delta R' in df.columns
     assert 'p-value' in df.columns
-    # Check that p-values are valid numbers
     assert not df['p-value'].isna().any()
+    
+    # Test specific channel summary
+    df_ch0 = model.summary(channel=0)
+    assert len(df_ch0) == 2
 
 def test_unfitted_attribute_error():
     """Verify custom AttributeError message for unfitted models."""
@@ -86,4 +87,4 @@ def test_predict_trial_mismatch(synth_data):
     # Try predicting with only 2 trials instead of 3
     short_data = synth_data['data'][:2]
     with pytest.raises(ValueError, match="LOTO predict requires the same number of trials"):
-        model.predict(short_data)
+        model.predict(data=short_data, X=synth_data['feature_order'])
