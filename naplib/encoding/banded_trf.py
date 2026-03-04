@@ -26,10 +26,8 @@ class BandedTRF(BaseEstimator):
         Sampling frequency (Hz).
     alphas : np.ndarray, optional
         Alphas to sweep for each feature. Default is np.logspace(-2, 5, 8).
-    basis_dict : dict, optional
-        Dictionary mapping feature names to basis objects.
     """
-    def __init__(self, tmin, tmax, sfreq, alphas=None, basis_dict=None):
+    def __init__(self, tmin, tmax, sfreq, alphas=None):
         self.tmin = tmin
         self.tmax = tmax
         self.sfreq = sfreq
@@ -85,10 +83,6 @@ class BandedTRF(BaseEstimator):
                     continue 
                 if x.ndim == 1:
                     x = x[:, np.newaxis]
-                
-                name = self.feature_order_[i]
-                if name in self.basis_dict:
-                    x = self.basis_dict[name].transform(x) 
                 
                 alpha = alphas_list[i]
                 mats.append(x / np.sqrt(alpha))
@@ -206,12 +200,10 @@ class BandedTRF(BaseEstimator):
         self.model_ = [Ridge(alpha=1.0).fit(tx, ty) for tx, ty in zip(final_X, y)]
         
         self.feat_dims_ = []
-        for i, name in enumerate(self.feature_order_):
+        for i in range(len(X)):
             x_sample = X[i][0]
             if isinstance(x_sample, list): x_sample = x_sample[0]
             if x_sample.ndim == 1: x_sample = x_sample[:, None]
-            if name in self.basis_dict:
-                x_sample = self.basis_dict[name].transform(x_sample)
             self.feat_dims_.append(x_sample.shape[1])
 
         return self
