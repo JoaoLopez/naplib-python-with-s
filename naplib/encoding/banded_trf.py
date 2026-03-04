@@ -151,7 +151,7 @@ class BandedTRF(BaseEstimator):
 
         self.scores_ = np.zeros((n_trials, self.n_targets_, len(X)))
         self.feature_alphas_ = []
-        self.alpha_paths = np.zeros((len(X), len(self.alphas)))
+        self.alpha_paths_ = np.zeros((len(X), len(self.alphas)))
 
         for i in range(len(X)):
             best_alpha = None
