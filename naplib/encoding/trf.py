@@ -195,8 +195,7 @@ class TRF(BaseEstimator):
         ----------
         data : naplib.Data object, optional
             Data object containing data to be normalized in one of the field.
-            If not given, must give the X and y data directly as the ``X``
-            and ``y`` arguments. 
+            If not given, must give the X data directly as the ``X`` argument. 
         X : str | list of np.ndarrays or a multidimensional np.ndarray
             Data to be used as predictor in the regression. Once arranged,
             should be of shape (time, num_features).

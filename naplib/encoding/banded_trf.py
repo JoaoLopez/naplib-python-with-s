@@ -29,14 +29,14 @@ class BandedTRF(BaseEstimator):
     basis_dict : dict, optional
         Dictionary mapping feature names to basis objects.
     """
-    def __init__(self, tmin, tmax, sfreq, alphas=None, basis_dict=None):
+    def __init__(self, tmin, tmax, sfreq, alphas=None, basis_dict={}):
         self.tmin = tmin
         self.tmax = tmax
         self.sfreq = sfreq
         self.alphas = alphas if alphas is not None else np.logspace(-2, 5, 8)
-        self.basis_dict = basis_dict if basis_dict is not None else {}
-        self.feature_alphas_ = {}
-        self.alpha_paths_ = {}
+        self.basis_dict = basis_dict
+        self.feature_alphas_ = []
+        self.alpha_paths_ = []
         self.feature_order_ = []
         self.model_ = None # Will store a list of fitted Ridge models (one per trial)
         self.target_ = None
@@ -69,13 +69,13 @@ class BandedTRF(BaseEstimator):
         
         return all_coefs.reshape(n_targets, n_feat_dim, self._ndelays, n_trials)
 
-    def _prepare_matrix(self, X_list, feature_names, alphas_dict):
+    def _prepare_matrix(self, X_list, alphas_list):
         processed_trials = []
         n_trials = len(X_list[0])
         
         for trl in range(n_trials):
             mats = []
-            for i, name in enumerate(feature_names):
+            for i in range(len(X_list)):
                 x = X_list[i][trl]
                 
                 if isinstance(x, list) and len(x) == 1:
@@ -89,7 +89,7 @@ class BandedTRF(BaseEstimator):
                 if name in self.basis_dict:
                     x = self.basis_dict[name].transform(x) 
                 
-                alpha = alphas_dict.get(name, 1.0)
+                alpha = alphas_list[i]
                 mats.append(x / np.sqrt(alpha))
             
             if not mats:
@@ -117,16 +117,15 @@ class BandedTRF(BaseEstimator):
             and ``y`` arguments. 
         X : list of str | list of list of np.ndarrays
             Data to be used as predictor in the regression. Should be a list, 
-            in which each element is feature, corresponding to a list of trials, 
-            each of shape (time, num_features).
+            in which each element is a feature, corresponding to a list of trials, 
+            each of which is a numpy array of shape (time, num_features).
             If a string, it must specify a list of fields of the Data
             provided in the first argument.
-        y : str | list of np.ndarrays or a multidimensional np.ndarray
+        y : str | list of np.ndarrays
             Data to be used as target(s) in the regression. Once arranged,
-            should be of shape (time, num_targets[, num_features_y]).
+            should be of shape (time, num_targets).
             If a string, it must specify one of the fields of the Data
-            provided in the first argument. If a multidimensional array, first dimension
-            indicates the trial/instances.
+            provided in the first argument.
 
         Returns
         -------
@@ -140,31 +139,35 @@ class BandedTRF(BaseEstimator):
         The prediction for a held-out trial $i$ is generated using the mean 
         coefficients of all trials $j \neq i$.
         """
-        self.feature_order_ = feature_order
-        self.target_ = target
+        if isinstance(X[0], str):
+            self.feature_order_ = X
+        else:
+            self.feature_order_ = [chr(i+65) for i in range(len(X))]
+        if isinstance(y, str):
+            self.target_ = target
+        else:
+            self.target_ = 'target'
         
-        y = _parse_outstruct_args(data, target)
+        y = _parse_outstruct_args(data, y)
         if not isinstance(y, list): y = [y]
+        X = [_parse_outstruct_args(data, x) for x in X]
         
         n_trials = len(y)
         self.n_targets_ = y[0].shape[1]
-        
-        all_features_data = []
-        for f in feature_order:
-            f_data = _parse_outstruct_args(data, f)
-            all_features_data.append(f_data if isinstance(f_data, list) else [f_data])
 
-        self.scores_ = np.zeros((n_trials, self.n_targets_, len(feature_order)))
+        self.scores_ = np.zeros((n_trials, self.n_targets_, len(X)))
+        self.feature_alphas_ = np.zeros((len(X), ))
+        self.alpha_paths = np.zeros((len(X), len(self.alphas)))
 
-        for i, current_feat in enumerate(feature_order):
+        for i, current_feat in enumerate(X):
             best_alpha = None
             max_r = -np.inf
             r_history = []
             best_r_per_trial_ch = None
             
             for alpha in tqdm(self.alphas, desc=f"Optimizing {current_feat}", leave=False):
-                temp_alphas = {**self.feature_alphas_, current_feat: alpha}
-                X_mats = self._prepare_matrix(all_features_data[:i+1], feature_order[:i+1], temp_alphas)
+                temp_alphas = self.feature_alphas_ + [alpha]
+                X_mats = self._prepare_matrix(X[:i+1], temp_alphas)
                 
                 trial_betas = [Ridge(alpha=1.0).fit(tx, ty.reshape(-1, self.n_targets_)).coef_ for tx, ty in zip(X_mats, y)]
 
@@ -193,17 +196,17 @@ class BandedTRF(BaseEstimator):
                     max_r, best_alpha = avg_r, alpha
                     best_r_per_trial_ch = current_alpha_trial_r
             
-            self.feature_alphas_[current_feat] = best_alpha
+            self.feature_alphas_.append(best_alpha)
             self.alpha_paths_[current_feat] = np.array(r_history)
             self.scores_[:, :, i] = best_r_per_trial_ch
 
         # Final fit on each trial separately
-        final_X = self._prepare_matrix(all_features_data, feature_order, self.feature_alphas_)
+        final_X = self._prepare_matrix(X, self.feature_alphas_)
         self.model_ = [Ridge(alpha=1.0).fit(tx, ty) for tx, ty in zip(final_X, y)]
         
         self.feat_dims_ = []
         for i, name in enumerate(feature_order):
-            x_sample = all_features_data[i][0]
+            x_sample = X[i][0]
             if isinstance(x_sample, list): x_sample = x_sample[0]
             if x_sample.ndim == 1: x_sample = x_sample[:, None]
             if name in self.basis_dict:
@@ -212,7 +215,7 @@ class BandedTRF(BaseEstimator):
 
         return self
 
-    def predict(self, data, feature_names=None):
+    def predict(self, data=None, X=['aud']):
         """
         Predict target responses using the fitted Banded Ridge model.
 
@@ -220,17 +223,19 @@ class BandedTRF(BaseEstimator):
         trial in the input data, it averages the regression coefficients 
         from all *other* trials (fitted during training) to generate the 
         prediction for the current trial.
-
+        
         Parameters
         ----------
-        data : naplib.OutStruct or list of dict
-            The data containing the features to predict from. Must contain 
-            the same number of trials as used during `fit`.
-        feature_names : list of str, optional
-            The subset of features to use for prediction. If None (default), 
-            uses all features specified in the `feature_order` during `fit`. 
-            This allows for isolating the contribution of specific bands.
-
+        data : naplib.Data object, optional
+            Data object containing data to predict from in one of the fields.
+            If not given, must give the X data directly.
+        X : list of str | list of list of np.ndarrays
+            Data to be used as predictor in the regression. Should be a list, 
+            in which each element is a feature, corresponding to a list of trials, 
+            each of which is a numpy array of shape (time, num_features).
+            If a list of strings, it must specify a list of fields of the Data
+            provided in the first argument.
+        
         Returns
         -------
         preds : list of np.ndarray
