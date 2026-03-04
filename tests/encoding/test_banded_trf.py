@@ -38,7 +38,7 @@ def test_banded_trf_loto_consistency(synth_data):
     """Test that coef_ property handles the 4D reshape correctly."""
     model = BandedTRF(tmin=synth_data['tmin'], tmax=synth_data['tmax'], 
                       sfreq=synth_data['sfreq'], alphas=[0.1, 10.0])
-    model.fit(data=synth_data['data'], feature_order=synth_data['feature_order'], target='resp')
+    model.fit(data=synth_data['data'], X=synth_data['feature_order'], target='resp')
     
     # Shape calculation: 2 targets, 2 features, 4 delays, 3 trials.
     # ndelays = (0.03 * 100) - (0 * 100) + 1 = 4.
@@ -47,7 +47,7 @@ def test_banded_trf_loto_consistency(synth_data):
 def test_predict_masking_logic(synth_data):
     """Verify that partial feature prediction works with multi-channel targets."""
     model = BandedTRF(tmin=synth_data['tmin'], tmax=synth_data['tmax'], sfreq=synth_data['sfreq'])
-    model.fit(data=synth_data['data'], feature_order=synth_data['feature_order'], target='resp')
+    model.fit(data=synth_data['data'], X=synth_data['feature_order'], target='resp')
     
     # Full prediction: should match target shape (samples, channels)
     preds_all = model.predict(synth_data['data'])
@@ -63,7 +63,7 @@ def test_predict_masking_logic(synth_data):
 def test_summary_p_values(synth_data):
     """Verify summary table computes stats across channels correctly."""
     model = BandedTRF(tmin=synth_data['tmin'], tmax=synth_data['tmax'], sfreq=synth_data['sfreq'])
-    model.fit(data=synth_data['data'], feature_order=synth_data['feature_order'], target='resp')
+    model.fit(data=synth_data['data'], X=synth_data['feature_order'], target='resp')
     
     df = model.summary()
     assert isinstance(df, pd.DataFrame)
@@ -81,7 +81,7 @@ def test_unfitted_attribute_error():
 def test_predict_trial_mismatch(synth_data):
     """LOTO requires the same number of trials for predict as fit."""
     model = BandedTRF(tmin=synth_data['tmin'], tmax=synth_data['tmax'], sfreq=synth_data['sfreq'])
-    model.fit(data=synth_data['data'], feature_order=synth_data['feature_order'], target='resp')
+    model.fit(data=synth_data['data'], X=synth_data['feature_order'], target='resp')
     
     # Try predicting with only 2 trials instead of 3
     short_data = synth_data['data'][:2]

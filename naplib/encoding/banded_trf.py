@@ -160,7 +160,7 @@ class BandedTRF(BaseEstimator):
         self.feature_alphas_ = []
         self.alpha_paths = np.zeros((len(X), len(self.alphas)))
 
-        for i, current_feat in enumerate(X):
+        for i in range(len(X)):
             best_alpha = None
             max_r = -np.inf
             r_history = []
@@ -262,6 +262,7 @@ class BandedTRF(BaseEstimator):
 
         X_mats = self._prepare_matrix(X, self.feature_alphas_)
         n_trials = len(X_mats)
+        n_feat_dim = X_mats[0].shape[1]
         
         if n_trials != len(self.model_):
             raise ValueError(
@@ -274,6 +275,12 @@ class BandedTRF(BaseEstimator):
             # Expand (trials, features) -> (trials, 1_target, features)
             all_coefs = all_coefs[:, np.newaxis, :]
 
+        if n_feat_dim < all_coefs.shape[2]:
+            all_coefs = all_coefs[:, :, :n_feat_dim]
+            print('Using reduced TRF')
+        elif n_feat_dim > all_coefs.shape[2]:
+            raise ValueError('Too many features for trained model.')
+
         preds = []
         for i in range(n_trials):
             # Indices for all trials except the current one
@@ -282,11 +289,8 @@ class BandedTRF(BaseEstimator):
             # Average coefficients and intercepts from the other trials
             loto_coef = np.mean(all_coefs[loto_indices], axis=0)
             
-            # Only use first coef features if using feature subset
-            sliced_coef = loto_coef[:, :X_mats[i].shape[1]]
-            
             # Predict for the current trial
-            preds.append(X_mats[i] @ sliced_coef.T)
+            preds.append(X_mats[i] @ loto_coef.T)
             
         return preds
 
