@@ -12,6 +12,7 @@ def load_bids(root,
               suffix,
               run=None,
               session=None,
+              extension=None,
               check=True,
               befaft=[0, 0],
               crop_by='onset',
@@ -39,6 +40,8 @@ def load_bids(root,
         Run name.
     session : string
         Session name.
+    extension : string
+        The extension of the filename. E.g., '.tsv'.
     check : bool
         If True, enforces BIDS conformity. Defaults to True.
     befaft : list or array-like or length 2, default=[0, 0]
@@ -94,8 +97,8 @@ def load_bids(root,
     if crop_by not in ACCEPTED_CROP_BY:
         raise ValueError(f'Invalid "crop_by" input. Expected one of {ACCEPTED_CROP_BY} but got "{crop_by}"')
     
-    bids_path = BIDSPath(subject=subject, root=root, session=session, task=task,
-                         run=run, suffix=suffix, datatype=datatype, check=check)
+    bids_path = BIDSPath(subject=subject, root=root, session=session, task=task, run=run, 
+        suffix=suffix, extension=extension, datatype=datatype, check=check)
     
     raw = read_raw_bids(bids_path=bids_path)
             
