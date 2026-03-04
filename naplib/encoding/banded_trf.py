@@ -32,7 +32,6 @@ class BandedTRF(BaseEstimator):
         self.tmax = tmax
         self.sfreq = sfreq
         self.alphas = alphas if alphas is not None else np.logspace(-2, 5, 8)
-        self.basis_dict = basis_dict if basis_dict is not None else {}
         self.feature_alphas_ = []
         self.alpha_paths_ = []
         self.feature_order_ = []
