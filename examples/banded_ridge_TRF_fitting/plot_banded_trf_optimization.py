@@ -82,12 +82,12 @@ alphas = np.logspace(-2, 8, 11)
 # Fit Model 1: Envelope -> Noise -> Peak Rate
 order_1 = ['env', 'noise', 'peak_rate']
 model1 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
-model1.fit(data=data, feature_order=order_1, target='resp')
+model1.fit(data=data, X=order_1, y='resp')
 
 # Fit Model 2: Peak Rate -> Noise -> Envelope
 order_2 = ['peak_rate', 'noise', 'env']
 model2 = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
-model2.fit(data=data, feature_order=order_2, target='resp')
+model2.fit(data=data, X=order_2, y='resp')
 
 ###############################################################################
 # 4. Alpha Optimization Paths (Marginal Delta R)
@@ -112,7 +112,7 @@ for b_idx in range(n_bands):
         peak_delta = np.max(delta_path)
         
         axes[i].semilogx(alphas, delta_path, marker='o', color=colors[feat], label=f'Path: {feat}')
-        axes[i].plot(best_alpha, peak_delta, '*', markersize=14, markeredgecolor='k', label=f'Selected $\lambda$')
+        axes[i].plot(best_alpha, peak_delta, '*', markersize=14, markeredgecolor='k', label=r'Selected $\lambda$')
         axes[i].set_title(f'Order {i+1} - Step {b_idx+1}: {feat}')
         axes[i].set_xlabel(r'Regularization Alpha ($\lambda$)')
         axes[i].legend()

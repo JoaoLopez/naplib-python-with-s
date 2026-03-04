@@ -114,7 +114,7 @@ for i in range(len(feature_list)):
 
 print("Fitting Banded TRF...")
 banded_model = BandedTRF(tmin=tmin, tmax=tmax, sfreq=sfreq, alphas=alphas)
-banded_model.fit(data=data, feature_order=feature_list, target='resp')
+banded_model.fit(data=data, X=feature_list, y='resp')
 
 df_summary = banded_model.summary()
 
