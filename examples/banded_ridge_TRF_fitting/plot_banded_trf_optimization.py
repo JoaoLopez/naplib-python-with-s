@@ -102,10 +102,10 @@ for b_idx in range(n_bands):
     fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
     for i, (mdl, ord_list) in enumerate(zip([model1, model2], [order_1, order_2])):
         feat = ord_list[b_idx]
-        path = mdl.alpha_paths_[feat]
+        path = mdl.alpha_paths_[b_idx]
         
         # Calculate Delta R Path relative to the max R of the previous band
-        prev_r = 0 if b_idx == 0 else np.max(mdl.alpha_paths_[ord_list[b_idx-1]])
+        prev_r = 0 if b_idx == 0 else np.max(mdl.alpha_paths_[b_idx-1])
         delta_path = path - prev_r
         
         best_alpha = mdl.feature_alphas_[feat]

@@ -195,9 +195,9 @@ for b_idx, feat in enumerate(feature_list):
     
     # --- Right Plot: Banded TRF (Independent Alpha) ---
     # In the banded approach, we look at the R-path for the specific feature band
-    banded_path = banded_model.alpha_paths_[feat]
+    banded_path = banded_model.alpha_paths_[b_idx]
     # Calculate marginal improvement relative to previous bands' max R
-    prev_banded_r = 0 if b_idx == 0 else np.max(banded_model.alpha_paths_[feature_list[b_idx-1]])
+    prev_banded_r = 0 if b_idx == 0 else np.max(banded_model.alpha_paths_[b_idx-1])
     banded_delta_path = banded_path - prev_banded_r
     
     best_banded_alpha = banded_model.feature_alphas_[feat]
