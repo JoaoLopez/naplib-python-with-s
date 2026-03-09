@@ -207,7 +207,8 @@ def test_plotly_electrode_coloring(data):
 
 def test_plotly_electrode_coloring_by_value(data):
     colors = ['k' if isL else 'r' for isL in data['isleft']]
-    fig, axes = plot_brain_elecs(data['brain_inflated'], data['coords'], data['isleft'], values=data['isleft'], vmin=-1, vmax=2, cmap='binary', hemi='both', view='medial', backend='plotly')
+    fig, axes = plot_brain_elecs(data['brain_inflated'], data['coords'], data['isleft'], values=data['isleft'],
+     vmin=-1, vmax=2, cmap='binary', hemi='both', view='medial', backend='plotly')
     assert len(fig.data) == 4
     assert fig.data[0]['x'].shape == (163842,)
     assert fig.data[0]['facecolor'].shape == (327680, 4)
@@ -249,9 +250,87 @@ def test_set_visible(data):
     ending_visible = brain_pial1.lh.alpha
     assert (ending_visible.sum() == 327680)
 
+def test_interpolate_electrodes_onto_brain(data):
+    """
+    Test interpolation of electrode values onto the cortical surface.
+    """
+    brain = data['brain_pial'] # Brain object containing lh and rh
+    lh = brain.lh
+    lh.reset_overlay()
+    
+    # 1. Setup: Place one active electrode near a known vertex
+    # Electrode 0 is at [-47.28, 16.29, -15.82]
+    coords = data['coords'][:1] 
+    values = np.array([10.0])
+    
+    # 2. Run interpolation
+    # k=1 (nearest neighbor), max_dist=10mm
+    lh.interpolate_electrodes_onto_brain(coords, values, k=1, max_dist=10, roi='all')
+    
+    # Check that vertices near the electrode have the value, and others are 0/nan
+    # Note: the code sets self.overlay[updated_vertices] = smoothed_values
+    assert np.isclose(lh.overlay.max(), 10.0)
+    assert np.any(lh.overlay == 10.0)
+    
+    # 3. Test ROI filtering
+    lh.reset_overlay()
+    # Use a ROI that doesn't exist near the electrode
+    lh.interpolate_electrodes_onto_brain(coords, values, k=1, max_dist=10, roi=['G_front_middle'])
+    
+    # If electrode 0 is in STG and we only allow Middle Frontal Gyrus, overlay should stay 0
+    # (Assuming electrode 0 isn't in G_front_middle)
+    if 'G_front_middle' not in lh.num2label[lh.labels[0]]:
+        assert np.all(lh.overlay == 0)
 
+def test_interpolation_inverse_distance_weighting(data):
+    """
+    Test that the weighting logic correctly averages two electrodes.
+    """
+    lh = data['brain_pial'].lh
+    lh.reset_overlay()
+    
+    # Two electrodes: one with 10.0, one with 0.0, same distance from a vertex
+    # We'll mock this by providing coordinates equidistant to a specific point
+    target_vertex_coord = lh.coords[500]
+    offset = np.array([2, 0, 0])
+    coords = np.array([target_vertex_coord + offset, target_vertex_coord - offset])
+    values = np.array([10.0, 0.0])
+    
+    lh.interpolate_electrodes_onto_brain(coords, values, k=2, max_dist=10)
+    
+    # At the midpoint (the vertex), the value should be the mean (5.0) 
+    # because weights are 1/dist and distances are equal.
+    assert np.isclose(lh.overlay[500], 5.0, atol=0.1)
 
-
-
-
+def test_parcellate_overlay(data):
+    """
+    Test that parcellation correctly merges vertex values into parcel-wide values.
+    """
+    lh = data['brain_pial'].lh
+    lh.reset_overlay()
+    
+    # 1. Manually "paint" some vertices in a specific parcel
+    target_label_num = 10
+    target_label_name = lh.num2label[target_label_num]
+    mask = lh.labels == target_label_num
+    
+    # Set half the vertices in this parcel to 100, the other half to 0
+    indices = np.where(mask)[0]
+    mid = len(indices) // 2
+    lh.overlay[indices[:mid]] = 100.0
+    lh.overlay[indices[mid:]] = 0.0
+    
+    # 2. Run parcellation with mean
+    lh.parcellate_overlay(merge_func=np.mean)
+    
+    # 3. All vertices in that parcel should now be the mean (50.0)
+    assert np.allclose(lh.overlay[mask], 50.0)
+    
+    # 4. Check with a different merge function (max)
+    lh.reset_overlay()
+    lh.overlay[indices[:mid]] = 10.0
+    lh.overlay[indices[mid:]] = 50.0
+    lh.parcellate_overlay(merge_func=np.max)
+    
+    assert np.allclose(lh.overlay[mask], 50.0)
 

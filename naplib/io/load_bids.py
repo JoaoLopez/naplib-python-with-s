@@ -3,14 +3,17 @@ from tqdm.auto import tqdm
 from naplib import logger
 from ..data import Data
 
-ACCEPTED_CROP_BY = ['onset', 'durations']
+ACCEPTED_CROP_BY = ['onset', 'durations', None]
 
 def load_bids(root,
               subject,
               datatype,
               task,
               suffix,
+              run=None,
               session=None,
+              extension=None,
+              check=True,
               befaft=[0, 0],
               crop_by='onset',
               info_include=['sfreq', 'ch_names'],
@@ -33,8 +36,14 @@ def load_bids(root,
         Task name.
     suffix : string
         Suffix name in file naming. This is often the same as datatype.
+    run : string
+        Run name.
     session : string
         Session name.
+    extension : string
+        The extension of the filename. E.g., '.tsv'.
+    check : bool
+        If True, enforces BIDS conformity. Defaults to True.
     befaft : list or array-like or length 2, default=[0, 0]
         Amount of time (in sec.) before and after each trial's true duration to include
         in the trial for the Data. For example, if befaft=[1,1] then if each trial's
@@ -88,8 +97,8 @@ def load_bids(root,
     if crop_by not in ACCEPTED_CROP_BY:
         raise ValueError(f'Invalid "crop_by" input. Expected one of {ACCEPTED_CROP_BY} but got "{crop_by}"')
     
-    bids_path = BIDSPath(subject=subject, root=root, session=session, task=task,
-                         suffix=suffix, datatype=datatype)
+    bids_path = BIDSPath(subject=subject, root=root, session=session, task=task, run=run, 
+        suffix=suffix, extension=extension, datatype=datatype, check=check)
     
     raw = read_raw_bids(bids_path=bids_path)
             
@@ -123,8 +132,9 @@ def load_bids(root,
     for trial in tqdm(range(len(raws))):
         trial_data = {}
         trial_data['event_index'] = trial
-        if 'description' in raw_responses[trial].annotations[0]:
-            trial_data['description'] = raw_responses[trial].annotations[0]['description']
+        if raw_responses[trial].annotations:
+            if 'description' in raw_responses[trial].annotations[0]:
+                trial_data['description'] = raw_responses[trial].annotations[0]['description']
         if raw_stims[trial] is not None:
             trial_data['stim'] = raw_stims[trial].get_data().transpose(1,0) # time by channels
             trial_data['stim_ch_names'] = raw_stims[trial].info['ch_names']
@@ -138,7 +148,8 @@ def load_bids(root,
         new_data.append(trial_data)  
 
     data_ = Data(new_data, strict=False)
-    data_.set_mne_info(raw_info)
+    if raw_info is not None:
+        data_.set_mne_info(raw_info)
     return data_
     
     
@@ -151,14 +162,14 @@ def _crop_raw_bids(raw_instance, crop_by, befaft):
     raw_instance : mne.io.Raw-like object
     
     crop_by : string, default='onset'
-        One of ['onset', 'annotations']. If crop by 'onset', each trial is split
+        One of ['onset', 'annotations', None]. If crop by 'onset', each trial is split
         by the onset of each event defined in the BIDS file structure and each
         trial ends when the next trial begins. If crop by 'annotations', each trial is split
         by the onset of each event defined in the BIDS file structure and each
         trial lasts the duration specified by the event. This is typically not desired
         when the events are momentary stimulus presentations that have very short duration
         because only the responses during the short duration of the event will be saved, and
-        all of the following responses are truncated.
+        all of the following responses are truncated. If None, no cropping.
     
      Returns
      -------
@@ -166,6 +177,8 @@ def _crop_raw_bids(raw_instance, crop_by, befaft):
          The cropped raw objects.
 
     '''
+    if crop_by == None:
+        return [raw_instance.copy()]
 
     max_time = (raw_instance.n_times - 1) / raw_instance.info['sfreq']
     

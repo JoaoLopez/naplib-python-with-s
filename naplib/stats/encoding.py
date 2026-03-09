@@ -210,3 +210,56 @@ def discriminability(D, L, elec_mode='all', method='lda'):
     
     return f_stat
 
+
+import numpy as np
+
+import numpy as np
+
+def pairwise_correlation(A, B, axis=0):
+    r"""
+    Compute Pearson correlation between A and B along a specified axis.
+    
+    The correlation is computed pairwise for each corresponding element 
+    along the remaining dimensions. The output will have the same shape 
+    as the inputs, but with the specified ``axis`` removed.
+    
+    The correlation is calculated as:
+    $$r = \frac{\sum (A_i - \bar{A})(B_i - \bar{B})}{\sqrt{\sum (A_i - \bar{A})^2 \sum (B_i - \bar{B})^2}}$$
+
+    Parameters
+    ----------
+    A : np.ndarray
+        First array.
+    B : np.ndarray
+        Second array. Must be the same shape as A.
+    axis : int, default=0
+        The axis along which to compute the correlation (e.g., the time dimension).
+        
+    Returns
+    -------
+    corr : np.ndarray or float
+        Pairwise correlations. If inputs are 1D, returns a float. 
+        Otherwise, returns an array of shape equal to the input shape 
+        with the ``axis`` dimension removed.
+    """
+    A = np.asarray(A)
+    B = np.asarray(B)
+    
+    if A.shape != B.shape:
+        raise ValueError(f"A and B must have the same shape, but got {A.shape} and {B.shape}")
+
+    # 1. Center the data along the specified axis
+    # keepdims=True is essential for broadcasting subtraction
+    am = A - np.mean(A, axis=axis, keepdims=True)
+    bm = B - np.mean(B, axis=axis, keepdims=True)
+    
+    # 2. Compute sum of squares (variance proxies)
+    a_ss = np.sum(am**2, axis=axis)
+    b_ss = np.sum(bm**2, axis=axis)
+    
+    # 3. Compute covariance proxy
+    coscale = np.sum(am * bm, axis=axis)
+    
+    # 4. Return normalized correlation
+    # 1e-15 prevents division by zero for constant signals
+    return coscale / (np.sqrt(a_ss * b_ss) + 1e-15)
