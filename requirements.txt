@@ -17,7 +17,7 @@ seaborn>=0.13.0
 plotly>=5.22.0
 
 # Domain Specific & Specialized
-gdist>=2.9.2
+tvb-gdist>=2.9.2
 mne>=1.7.1
 scikit-spatial>=7.1.0
 tdt>=0.5.0
