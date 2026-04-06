@@ -4,6 +4,7 @@ a bug with numba versions in surfdist making it incompatible as a dependency.
 """
 
 import gdist
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.colors import LightSource
 import numpy as np
@@ -190,10 +191,7 @@ def surfdist_viz(
 
     # if cmap is given as string, translate to matplotlib cmap
     if isinstance(cmap, str):
-        try:
-            cmap = plt.cm.get_cmap(cmap)
-        except AttributeError:
-            cmap = plt.get_cmap(cmap)
+        cmap = mpl.colormaps[cmap]
 
     if ax is None:
         premade_ax = False
