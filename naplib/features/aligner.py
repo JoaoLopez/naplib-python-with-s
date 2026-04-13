@@ -307,7 +307,7 @@ class Aligner():
                 if old_fs == 16000:
                     write_wavfile(join(self.tmp_dir, wavfile_), 16000, wavdata)
                 else:
-                    wavdata = scipy_resample(wavdata, int(16000. / old_fs))
+                    wavdata = scipy_resample(wavdata, int(len(wavdata) * 16000. / old_fs))
                     write_wavfile(join(self.tmp_dir, wavfile_), 16000, wavdata)
             
 

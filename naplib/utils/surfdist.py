@@ -4,6 +4,7 @@ a bug with numba versions in surfdist making it incompatible as a dependency.
 """
 
 import gdist
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.colors import LightSource
 import numpy as np
@@ -24,7 +25,7 @@ def load_freesurfer_label(annot_input, label_name):
     labels, _, names = read_annot(annot_input)
     names = [i.decode("utf-8") for i in names]
     label_value = names.index(label_name)
-    label_nodes = np.array(np.where(np.in1d(labels, label_value)), dtype=np.int32)
+    label_nodes = np.array(np.where(np.isin(labels, label_value)), dtype=np.int32)
 
     return label_nodes
 
@@ -81,7 +82,7 @@ def triangles_keep_cortex(triangles, cortex):
     # for or each face/triangle keep only those that only contain nodes within the list of cortex nodes
     input_shape = triangles.shape
     triangle_is_in_cortex = np.all(
-        np.reshape(np.in1d(triangles.ravel(), cortex), input_shape), axis=1
+        np.reshape(np.isin(triangles.ravel(), cortex), input_shape), axis=1
     )
 
     cortex_triangles_old = np.array(triangles[triangle_is_in_cortex], dtype=np.int32)
@@ -100,7 +101,7 @@ def translate_src(src, cortex):
     """
     Convert source nodes to new surface (without medial wall).
     """
-    src_new = np.array(np.where(np.in1d(cortex, src))[0], dtype=np.int32)
+    src_new = np.array(np.where(np.isin(cortex, src))[0], dtype=np.int32)
 
     return src_new
 
@@ -190,10 +191,7 @@ def surfdist_viz(
 
     # if cmap is given as string, translate to matplotlib cmap
     if isinstance(cmap, str):
-        try:
-            cmap = plt.cm.get_cmap(cmap)
-        except AttributeError:
-            cmap = plt.get_cmap(cmap)
+        cmap = mpl.colormaps[cmap]
 
     if ax is None:
         premade_ax = False

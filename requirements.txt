@@ -1,20 +1,29 @@
-matplotlib>=3.1.0
-numpy>=1.15.0,<2.0 # numpy>=2.0 is incompatible with gdist, a dependency of surfdist
-scipy>=1.5.0
-pandas>=1.0.0
-statsmodels>=0.13.0
-hdf5storage>=0.1.1
-seaborn>=0.12.0
+# Core Scientific Stack (Updated for NumPy 2.0 ABI/API compatibility)
+numpy>=2.0.0
+scipy>=1.13.0
+pandas>=2.2.2
+matplotlib>=3.9.0
+statsmodels>=0.14.2
+scikit-learn>=1.5.0
+
+# Data Storage & IO
+h5py>=3.11.0
+hdf5storage>=0.2.0
 pyyaml
-TextGrid
-scikit-learn
-joblib
-mne
-h5py
-patsy
+nibabel>=5.2.1
+
+# Visualization
+seaborn>=0.13.0
+plotly>=5.22.0
+
+# Domain Specific & Specialized
+tvb-gdist>=2.9.2
+mne>=1.7.1
+scikit-spatial>=7.1.0
 tdt>=0.5.0
-packaging
-plotly>=5.0.0
-nibabel>=5.0.0
-scikit-spatial>=5.0.0
-gdist>=2.0.0
+TextGrid
+
+# Utilities
+joblib>=1.4.2
+patsy>=0.5.6
+packaging>=24.0

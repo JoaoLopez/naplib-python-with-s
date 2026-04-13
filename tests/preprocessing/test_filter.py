@@ -10,7 +10,7 @@ def bandpower(x, fs, fmin, fmax):
     f, Pxx = scipy.signal.periodogram(x, fs=fs)
     ind_min = np.argmax(f > fmin) - 1
     ind_max = np.argmax(f > fmax) - 1
-    return np.trapz(Pxx[ind_min: ind_max], f[ind_min: ind_max])
+    return np.trapezoid(Pxx[ind_min: ind_max], f[ind_min: ind_max])
 
 @pytest.fixture(scope='module')
 def data():
